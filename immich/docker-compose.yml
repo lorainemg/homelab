@@ -10,8 +10,13 @@ services:
     volumes:
       - ${UPLOAD_LOCATION}:/data
       - /etc/localtime:/etc/localtime:ro
-    env_file:
-      - .env
+    # Explicit environment instead of env_file: .env is gitignored, so it
+    # doesn't exist in Portainer's clone of this repo; stack env vars do.
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_DATABASE_NAME: ${DB_DATABASE_NAME}
+      IMMICH_TELEMETRY_INCLUDE: ${IMMICH_TELEMETRY_INCLUDE:-}
     ports:
       - '2283:2283'
     depends_on:
@@ -29,8 +34,6 @@ services:
     image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
     volumes:
       - model-cache:/cache
-    env_file:
-      - .env
     restart: always
     healthcheck:
       disable: false
