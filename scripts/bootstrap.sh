@@ -25,12 +25,6 @@ for stack in "${STACKS[@]}"; do
   fi
 done
 
-if [[ ! -f monitoring/prometheus/secrets/ha_token ]]; then
-  echo "!! monitoring/prometheus/secrets/ha_token is missing — create a long-lived" >&2
-  echo "   access token in Home Assistant and write it to that file." >&2
-  exit 1
-fi
-
 for stack in "${STACKS[@]}"; do
   echo "==> $stack"
   docker compose --project-directory "$stack" up -d
