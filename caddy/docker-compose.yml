@@ -17,7 +17,10 @@ services:
       - TZ=${TZ}
       - DOMAIN_BASE=${DOMAIN_BASE}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # REPO_DIR defaults to "." for plain docker compose. Portainer CE can't
+      # mount relative paths from its git clone, so its stack env sets
+      # REPO_DIR to the host checkout of this repo (see README).
+      - ${REPO_DIR:-.}/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:

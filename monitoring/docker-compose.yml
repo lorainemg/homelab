@@ -6,9 +6,11 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      # ./prometheus also contains secrets/ha_token (gitignored), used by
-      # prometheus.yml to scrape Home Assistant.
-      - ./prometheus:/etc/prometheus
+      # prometheus/ also contains secrets/ha_token (gitignored), used by
+      # prometheus.yml to scrape Home Assistant. REPO_DIR defaults to "." for
+      # plain docker compose; Portainer's stack env points it at the host
+      # checkout of this repo (CE can't mount relative paths from its clone).
+      - ${REPO_DIR:-.}/prometheus:/etc/prometheus
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -59,7 +61,7 @@ services:
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./promtail:/etc/promtail
+      - ${REPO_DIR:-.}/promtail:/etc/promtail
     command: -config.file=/etc/promtail/promtail.yml
     networks:
       - internal
@@ -70,7 +72,7 @@ services:
     restart: unless-stopped
     command: -config.file=/etc/tempo/tempo.yml
     volumes:
-      - ./tempo:/etc/tempo
+      - ${REPO_DIR:-.}/tempo:/etc/tempo
       - tempo_data:/tmp/tempo
     networks:
       - internal
@@ -81,7 +83,7 @@ services:
     restart: unless-stopped
     command: ["--config=/etc/otelcol/otel-collector.yml"]
     volumes:
-      - ./otelcol:/etc/otelcol
+      - ${REPO_DIR:-.}/otelcol:/etc/otelcol
     networks:
       - internal
       # Joins the trakt bot's network so the collector can forward telemetry

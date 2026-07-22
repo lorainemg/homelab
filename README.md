@@ -155,6 +155,19 @@ Enable the secret-scanning hook once per clone:
 cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 ```
 
-The plan is to move the stacks to Portainer's GitOps mode so this repo is the
-source of truth: Portainer polls the repo and redeploys a stack when its
-compose file changes.
+## GitOps deployment (Portainer CE)
+
+The stacks are deployed as Portainer **git-backed stacks** pointing at this
+repo (each with compose path `<stack>/docker-compose.yml`), so pushing a
+commit redeploys the affected stack. Two CE quirks are handled via per-stack
+environment variables set in Portainer:
+
+- **Relative bind mounts don't work in CE git stacks** (Portainer clones the
+  repo inside its own container). The `caddy` and `monitoring` stacks mount
+  their configs via `${REPO_DIR:-.}`, and Portainer sets `REPO_DIR` to a
+  checkout of this repo on the host (kept fresh with a `git pull` cron).
+  Plain `docker compose` users need no override.
+- **Build contexts resolve on Portainer's filesystem**, where the host's
+  data root is mounted at `/external/data`. The `home-assistant` stack sets
+  `COPILOT_BRIDGE_CONTEXT=/external/data/home-assistant/Github-Copilot-SDK-integration/addon`
+  in Portainer.

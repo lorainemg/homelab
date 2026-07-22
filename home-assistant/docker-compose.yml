@@ -100,7 +100,9 @@ services:
   github_copilot_bridge:
     container_name: github_copilot_bridge
     build:
-      context: ${DATA_ROOT:-/data}/home-assistant/Github-Copilot-SDK-integration/addon
+      # Portainer resolves build contexts on ITS filesystem (where the host's
+      # /data is mounted at /external/data), so its stack env overrides this.
+      context: ${COPILOT_BRIDGE_CONTEXT:-/data/home-assistant/Github-Copilot-SDK-integration/addon}
     restart: unless-stopped
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
