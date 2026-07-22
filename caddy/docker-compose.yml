@@ -10,17 +10,15 @@ services:
       - internal
 
   caddy:
-    image: caddy:2.8
+    # Built by .github/workflows/deploy.yml from ./Dockerfile (Caddyfile
+    # baked in). Per-commit tags exist alongside :latest for rollbacks.
+    image: ghcr.io/lorainemg/homelab/caddy:latest
     container_name: caddy
     restart: unless-stopped
     environment:
       - TZ=${TZ}
       - DOMAIN_BASE=${DOMAIN_BASE}
     volumes:
-      # REPO_DIR defaults to "." for plain docker compose. Portainer CE can't
-      # mount relative paths from its git clone, so its stack env sets
-      # REPO_DIR to the host checkout of this repo (see README).
-      - ${REPO_DIR:-.}/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:

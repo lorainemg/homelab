@@ -1,0 +1,146 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # deploy-everything button (fresh server, changed secrets)
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      stacks: ${{ steps.filter.outputs.changes }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            caddy:
+              - 'caddy/**'
+              - '.github/workflows/deploy.yml'
+            monitoring:
+              - 'monitoring/**'
+              - '.github/workflows/deploy.yml'
+            registry:
+              - 'registry/**'
+              - '.github/workflows/deploy.yml'
+            immich:
+              - 'immich/**'
+              - '.github/workflows/deploy.yml'
+
+  deploy:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.stacks != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["caddy","monitoring","registry","immich"]') || fromJSON(needs.changes.outputs.stacks) }}
+    env:
+      IMAGE_BASE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Per-image filters so only touched configs trigger a rebuild.
+      - uses: dorny/paths-filter@v3
+        id: images
+        with:
+          filters: |
+            caddy:
+              - 'caddy/Dockerfile'
+              - 'caddy/Caddyfile'
+            prometheus:
+              - 'monitoring/prometheus/**'
+            promtail:
+              - 'monitoring/promtail/**'
+            tempo:
+              - 'monitoring/tempo/**'
+            otelcol:
+              - 'monitoring/otelcol/**'
+
+      - uses: docker/login-action@v3
+        if: matrix.stack == 'caddy' || matrix.stack == 'monitoring'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        if: matrix.stack == 'caddy' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.caddy == 'true')
+        with:
+          context: caddy
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/caddy:latest
+            ${{ env.IMAGE_BASE }}/caddy:${{ github.sha }}
+
+      - uses: docker/build-push-action@v6
+        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.prometheus == 'true')
+        with:
+          context: monitoring/prometheus
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/prometheus:latest
+            ${{ env.IMAGE_BASE }}/prometheus:${{ github.sha }}
+
+      - uses: docker/build-push-action@v6
+        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.promtail == 'true')
+        with:
+          context: monitoring/promtail
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/promtail:latest
+            ${{ env.IMAGE_BASE }}/promtail:${{ github.sha }}
+
+      - uses: docker/build-push-action@v6
+        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.tempo == 'true')
+        with:
+          context: monitoring/tempo
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/tempo:latest
+            ${{ env.IMAGE_BASE }}/tempo:${{ github.sha }}
+
+      - uses: docker/build-push-action@v6
+        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.otelcol == 'true')
+        with:
+          context: monitoring/otelcol
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/otelcol:latest
+            ${{ env.IMAGE_BASE }}/otelcol:${{ github.sha }}
+
+      # Stack env = committed deploy.env (non-secret) + this stack's secrets.
+      - name: Assemble stack env
+        run: |
+          case '${{ matrix.stack }}' in
+            caddy)
+              cat caddy/deploy.env > .stack.env
+              echo 'CLOUDFLARE_TUNNEL_TOKEN=${{ secrets.CLOUDFLARE_TUNNEL_TOKEN }}' >> .stack.env ;;
+            monitoring)
+              echo 'GRAFANA_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}' > .stack.env
+              echo 'HA_TOKEN=${{ secrets.HA_TOKEN }}' >> .stack.env ;;
+            immich)
+              cat immich/deploy.env > .stack.env
+              echo 'DB_PASSWORD=${{ secrets.DB_PASSWORD }}' >> .stack.env ;;
+            *)
+              : > .stack.env ;;
+          esac
+
+      - uses: cssnr/portainer-stack-deploy-action@v1
+        with:
+          token: ${{ secrets.PORTAINER_API_TOKEN }}
+          url: ${{ secrets.PORTAINER_URL }}
+          endpoint: 3
+          name: ${{ matrix.stack == 'registry' && 'docker-registry' || matrix.stack }}
+          type: file
+          file: ${{ matrix.stack }}/docker-compose.yml
+          env_file: .stack.env
+          standalone: true
+          pull: true
+          prune: true

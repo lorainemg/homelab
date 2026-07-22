@@ -1,16 +1,15 @@
 services:
   prometheus:
-    image: prom/prometheus:latest
+    # Built by CI from ./prometheus (config baked in, HA token injected at
+    # startup from the HA_TOKEN env var — see prometheus/docker-entrypoint.sh).
+    image: ghcr.io/lorainemg/homelab/prometheus:latest
     container_name: prometheus
     restart: unless-stopped
     ports:
       - "9090:9090"
+    environment:
+      - HA_TOKEN=${HA_TOKEN:-}
     volumes:
-      # prometheus/ also contains secrets/ha_token (gitignored), used by
-      # prometheus.yml to scrape Home Assistant. REPO_DIR defaults to "." for
-      # plain docker compose; Portainer's stack env points it at the host
-      # checkout of this repo (CE can't mount relative paths from its clone).
-      - ${REPO_DIR:-.}/prometheus:/etc/prometheus
       - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
@@ -54,36 +53,35 @@ services:
       - internal
 
   promtail:
-    image: grafana/promtail:latest
+    # Built by CI from ./promtail (config baked in).
+    image: ghcr.io/lorainemg/homelab/promtail:latest
     container_name: promtail
     restart: unless-stopped
     volumes:
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock
-      - ${REPO_DIR:-.}/promtail:/etc/promtail
     command: -config.file=/etc/promtail/promtail.yml
     networks:
       - internal
 
   tempo:
-    image: grafana/tempo:2.4.2
+    # Built by CI from ./tempo (config baked in).
+    image: ghcr.io/lorainemg/homelab/tempo:latest
     container_name: tempo
     restart: unless-stopped
     command: -config.file=/etc/tempo/tempo.yml
     volumes:
-      - ${REPO_DIR:-.}/tempo:/etc/tempo
       - tempo_data:/tmp/tempo
     networks:
       - internal
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:latest
+    # Built by CI from ./otelcol (config baked in).
+    image: ghcr.io/lorainemg/homelab/otelcol:latest
     container_name: otel_collector
     restart: unless-stopped
     command: ["--config=/etc/otelcol/otel-collector.yml"]
-    volumes:
-      - ${REPO_DIR:-.}/otelcol:/etc/otelcol
     networks:
       - internal
       # Joins the trakt bot's network so the collector can forward telemetry
