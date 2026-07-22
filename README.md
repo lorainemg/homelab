@@ -1,8 +1,9 @@
 # 🏠 Homelab
 
-Infrastructure-as-code for my single-node homelab: ~25 containers across 6
-Docker Compose stacks, published to the internet through a Cloudflare Tunnel
-and fully observable with a Grafana/Prometheus/Loki/Tempo stack.
+Infrastructure-as-code for my single-node homelab: ~25 containers across five
+Docker Compose stacks (plus a self-deploying app stack), published to the
+internet through a Cloudflare Tunnel and fully observable with a
+Grafana/Prometheus/Loki/Tempo stack.
 
 Everything needed to rebuild the server from scratch lives in this repo —
 except the data and the secrets, which stay on the machine.
@@ -79,8 +80,14 @@ network (`internal`). TLS terminates at Cloudflare's edge.
 | [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama, Copilot bridge | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container |
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds |
-| [trakt-bot/](trakt-bot/) | My Telegram bot for Trakt.tv + Postgres 17 + Aspire dashboard | Personal project, deployed via .NET Aspire to the private registry, instrumented with OpenTelemetry |
 | [portainer/](portainer/) | Portainer CE | Container management UI |
+
+One more stack runs on the server but is deliberately **not** defined here:
+[traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
+for Trakt.tv + Postgres 17 + Aspire dashboard) generates its compose file
+with .NET Aspire and deploys itself from its own repo's CI via the Portainer
+API. Apps push, infrastructure pulls — this repo only documents the seam
+(the monitoring stack joins its network to collect telemetry).
 
 Highlights:
 
@@ -109,7 +116,6 @@ Highlights:
 │   ├── tempo/        tempo.yml
 │   └── otelcol/      otel-collector.yml
 ├── registry/         docker-compose.yml
-├── trakt-bot/        docker-compose.yml, .env.example
 ├── portainer/        docker-compose.yml
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```

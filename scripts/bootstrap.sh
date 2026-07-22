@@ -9,10 +9,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-STACKS=(registry caddy immich home-assistant monitoring trakt-bot)
+STACKS=(registry caddy immich home-assistant monitoring)
 
 # Shared bridge network that lets Caddy reach every stack by container name.
 docker network inspect internal >/dev/null 2>&1 || docker network create internal
+
+# The monitoring stack joins the trakt bot's network (the bot deploys itself
+# from its own repo's CI); pre-create it so monitoring can start first.
+docker network inspect trakt-tg-bot_aspire >/dev/null 2>&1 || docker network create trakt-tg-bot_aspire
 
 for stack in "${STACKS[@]}"; do
   if [[ -f "$stack/.env.example" && ! -f "$stack/.env" ]]; then
