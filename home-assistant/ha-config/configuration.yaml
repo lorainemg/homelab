@@ -1,0 +1,36 @@
+# MQTT is configured via the UI integration these days; kept for reference.
+#mqtt:
+#  broker: mosquitto        # Connects via container name on internal network
+#  username: homeassistant
+#  password: !secret mqtt_password
+#  discovery: true
+
+#recorder:
+#  db_url: sqlite:///config/homeassistant.db
+#  purge_keep_days: 7
+
+default_config:
+
+mobile_app:
+prometheus:
+
+
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 172.19.0.0/16   # Docker internal network range
+
+frontend:
+  themes: !include_dir_merge_named themes/
+
+wake_on_lan:
+
+homeassistant:
+  customize:
+    sensor.speedtest_download:
+      scan_interval: 3600
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+helpers: !include helpers.yaml

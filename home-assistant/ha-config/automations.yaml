@@ -1,0 +1,520 @@
+- id: '1773804752743'
+  alias: Cleaning Finished
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.roborock_qrevo_pro_cleaning
+    to:
+    - 'off'
+    from:
+    - 'on'
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Cleaning Complete
+      body: ✅ Finished successfully
+  mode: single
+- id: '1773804931100'
+  alias: Testing
+  description: ''
+  triggers:
+  - trigger: event
+    event_type: ''
+    context:
+      user_id:
+      - eab4e4d8c2214de38b31bf510e165966
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      body: ✅ Finished successfully
+      title: Cleaning Complete
+  mode: single
+- id: '1773874550686'
+  alias: Start Cleaning
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.roborock_qrevo_pro_cleaning
+    to:
+    - 'on'
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Cleaning Started
+      body: ▶️ Started cleaning
+  mode: single
+- id: '1773874866102'
+  alias: Dock Error
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.roborock_qrevo_pro_dock_dock_error
+    from:
+    - ok
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Dock Error
+      body: '⚠️ Code: {{ state_translated(''sensor.roborock_qrevo_pro_dock_dock_error'')
+        }}'
+  mode: single
+- id: '1773875160261'
+  alias: Vacuum Error
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.roborock_qrevo_pro_vacuum_error
+    from:
+    - none
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 0
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Vacuum Error
+      body: "\U0001F6A8 Code: {{ state_translated('sensor.roborock_qrevo_pro_vacuum_error')
+        }}"
+  mode: single
+- id: '1773875283465'
+  alias: Vacuum Error Resolved
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.roborock_qrevo_pro_vacuum_error
+    - sensor.roborock_qrevo_pro_dock_dock_error
+    to:
+    - none
+    - ok
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Error
+      body: "\U0001F389 Error Resolved: {{ trigger.from_state.state.replace('_', '
+        ').title() }}"
+  mode: single
+- id: '1773875957137'
+  alias: Cleaning Error
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - binary_sensor.roborock_qrevo_pro_cleaning
+    from:
+    - 'off'
+    to:
+    - 'on'
+  conditions:
+  - condition: state
+    entity_id: sensor.roborock_qrevo_pro_vacuum_error
+    state:
+    - audio_error
+    - collect_dust_error_4
+    - battery_error
+    - bumper_stuck
+    - visual_sensor
+    - cannot_cross_carpet
+    - charging_error
+    - clear_brush_exception
+    - clear_water_box_hoare
+    - dirty_water_box_hoare
+    - check_clean_carouse
+    - collect_dust_error_3
+    - filter_screen_exception
+    - clear_water_box_exception
+    - clean_carousel_exception
+    - clean_carousel_water_full
+    - cliff_sensor_error
+    - dock_locator_error
+    - dock
+    - drain_water_exception
+    - fan_error
+    - filter_blocked
+    - wheels_suspended
+    - wheels_jammed
+    - strainer_error
+    - internal_error
+    - invisible_wall_detected
+    - lidar_blocked
+    - low_battery
+    - main_brush_jammed
+    - no_dustbin
+    - optical_flow_sensor_dirt
+    - clear_brush_exception_2
+    - sink_strainer_hoare
+    - return_to_dock_fail
+    - robot_trapped
+    - side_brush_error
+    - compass_error
+    - temperature_protection
+    - up_water_exception
+    - vertical_bumper_pressed
+    - vibrarise_jammed
+    - wall_sensor_dirty
+    - light_touch
+    - mopping_roller_1
+    - mopping_roller_2
+    - mopping_roller_error_2
+    - water_carriage_drop
+    - side_brush_jammed
+  - condition: state
+    entity_id: sensor.roborock_qrevo_pro_dock_dock_error
+    state:
+    - cleaning_tank_full_or_blocked
+    - dirty_tank_latch_open
+    - duct_blockage
+    - maintenance_brush_jammed
+    - no_dustbin
+    - unavailable
+    - waste_water_tank_full
+    - water_empty
+    - unknown
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Error
+      body: "⚠️\U0001F6A8 Roborock can't continue cleaning because of an error\n-
+        Vacuum: {{ state_translated('sensor.roborock_qrevo_pro_vacuum_error') }}\n-
+        Dock: {{ state_translated('sensor.roborock_qrevo_pro_dock_dock_error') }}"
+  mode: single
+- id: '1773876448702'
+  alias: Low Battery
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.roborock_qrevo_pro_battery
+    below: 20
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.roborock_qrevo_pro_cleaning
+    state:
+    - 'on'
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Low Battery
+      body: ⚠️ May not finish cleaning
+  mode: single
+- id: '1773877169377'
+  alias: Main Brush Mantainence
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.roborock_qrevo_pro_main_brush_time_left
+    below: 5
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Main Brush
+      body: "\U0001F527 Remaining life: {{ states('sensor.roborock_qrevo_pro_main_brush_time_left')
+        | float | round(1) }} h\nConsider replacing it soon."
+  mode: single
+- id: '1773877309245'
+  alias: Side Brush Maintenance
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.roborock_qrevo_pro_side_brush_time_left
+    below: 5
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Side Brush
+      body: "\U0001F527 Remaining life: {{ states('sensor.roborock_qrevo_pro_side_brush_time_left')
+        | float | round(1) }} h\nReplace before next cleaning."
+  mode: single
+- id: '1773877960278'
+  alias: Filter Maintenance
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.roborock_qrevo_pro_filter_time_left
+    below: 5
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Filter
+      body: "\U0001F527Remaining life: {{ states('sensor.roborock_qrevo_pro_filter_time_left')
+        | float | round(1) }} h\nReplace to maintain suction and air quality."
+  mode: single
+- id: '1773878123240'
+  alias: Sensor Maintenance
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.roborock_qrevo_pro_sensor_time_left
+    below: 5
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Sensor Maintenance
+      body: "\U0001F527 Remaining life: {{ states('sensor.roborock_qrevo_pro_sensor_time_left')
+        | float | round(1) }} h\nClean sensors to avoid errors."
+  mode: single
+- id: '1773878208240'
+  alias: Dock Strainer Maintenance
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.roborock_qrevo_pro_dock_strainer_time_left
+    below: 5
+  conditions: []
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Dock Strainer
+      body: "\U0001F527 Remaining life: {{ states('sensor.roborock_qrevo_pro_dock_strainer_time_left')
+        | float | round(1) }} h\nClean or replace soon to avoid overflow."
+  mode: single
+- id: '1773879827201'
+  alias: High Temp Thermostat
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.thermostat_current_temp
+    above: 78
+  conditions: []
+  actions:
+  - action: script.thermostat_script
+    metadata: {}
+    data:
+      title: High Temperature
+      body: "\U0001F525 Current: {{ states('sensor.thermostat_current_temp') | float
+        | round(1) }}°F \nConsider lowering the setpoint."
+  mode: single
+- id: '1773880015361'
+  alias: Low Temp Thermostat
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.thermostat_current_temp
+    below: 60
+  conditions: []
+  actions:
+  - action: script.thermostat_script
+    metadata: {}
+    data:
+      title: Low Temperature
+      body: '❄️ Current: {{ states(''sensor.thermostat_current_temp'') | float | round(1)
+        }}°F
+
+        Consider increasing the setpoint.'
+  mode: single
+- id: '1773880161690'
+  alias: High Humidity Thermostat
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.thermostat_current_humidity
+    below: 30
+  conditions: []
+  actions:
+  - action: script.thermostat_script
+    metadata: {}
+    data:
+      title: High Humidity
+      body: "\U0001F4A7Current: {{ states('sensor.thermostat_current_humidity') |
+        float | round(1) }}% \nConsider using a dehumidifier."
+  mode: single
+- id: '1773880414752'
+  alias: Low Humidity Thermostat
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.thermostat_current_humidity
+    above: 80
+  conditions: []
+  actions:
+  - action: script.thermostat_script
+    metadata: {}
+    data:
+      title: Low Humidity
+      body: "\U0001F4A7 Current: {{ states('sensor.thermostat_current_humidity') |
+        float | round(1) }}% \nConsider using a humidifier."
+  mode: single
+- id: '1773880648383'
+  alias: Offine Thermostat
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.thermostat_mode
+    to:
+    - unavailable
+    for:
+      hours: 0
+      minutes: 30
+      seconds: 0
+  conditions: []
+  actions:
+  - action: script.thermostat_script
+    metadata: {}
+    data:
+      title: System Offline
+      body: ❌ Unable to reach thermostat.
+  mode: single
+- id: '1773884477342'
+  alias: Alerts for Todays Temp
+  description: Sends Telegram alert if tomorrow's temperature exceeds threshold
+  triggers:
+  - at: 06:00:00
+    trigger: time
+  actions:
+  - action: script.daily_weather_forecast_telegram
+    response_variable: wf
+  - variables:
+      temp_high: '{{ wf.temperature }}'
+      temp_low: '{{ wf.templow }}'
+      precip: '{{ wf.precipitation_probability }}'
+  - if:
+    - condition: template
+      value_template: '{{ temp_low > 75 and temp_high > 90 }}'
+    then:
+    - action: script.weather_tg_notify
+      data:
+        title: High Temperature
+        body: "\U0001F975 It's going to be a really hot day today:\n- High: {{ temp_high
+          }}°F\n- Low: {{ temp_low }}°F"
+  - if:
+    - condition: template
+      value_template: '{{ temp_low < 32 or temp_high < 60 }}'
+    then:
+    - action: script.weather_tg_notify
+      data:
+        title: Low Temperature
+        body: "\U0001F976 It's going to be a really cold day today:\n- High: {{ temp_high
+          }}°F\n- Low: {{ temp_low }}°F"
+  - if:
+    - condition: template
+      value_template: '{{ precip > 70 }}'
+    then:
+    - action: script.weather_tg_notify
+      data:
+        title: Rain Expected
+        body: '☔️ It''s probably going to rain today:
+
+          - Precipitation Probability: {{ precip }}%'
+- id: '1773951271813'
+  alias: Front Door Left Unlocked
+  description: ''
+  triggers:
+  - trigger: time
+    at: 00:00:00
+  conditions:
+  - condition: state
+    entity_id: lock.front_door_lock
+    state:
+    - open
+    - unlocked
+    for:
+      hours: 0
+      minutes: 5
+      seconds: 0
+  actions:
+  - action: script.lock_tg_notify
+    metadata: {}
+    data:
+      title: Front Door Unlocked
+      body: "\U0001F6AA Front door is still unlocked at 12am."
+  mode: single
+- id: '1773951795504'
+  alias: Front Door Alert
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - lock.front_door_lock
+    to:
+    - jammed
+  conditions: []
+  actions:
+  - action: script.lock_tg_notify
+    metadata: {}
+    data:
+      title: Front Door Alert
+      body: '⚠️ Front door lock: {{ state_translated(''lock.front_door_lock'') }}'
+  mode: single
+- id: '1773952436662'
+  alias: Front Door Low Battery
+  description: ''
+  triggers:
+  - trigger: numeric_state
+    entity_id:
+    - sensor.front_door_lock_battery_level
+    below: 20
+  - trigger: numeric_state
+    entity_id:
+    - sensor.front_door_lock_battery_level
+    below: 10
+  conditions: []
+  actions:
+  - action: script.lock_tg_notify
+    metadata: {}
+    data:
+      title: Front Door Battery Low
+      body: "\U0001FAAB Front door lock battery at {{ states('sensor.front_door_lock_battery_level')
+        }}%"
+  mode: single
+- id: '1774012852322'
+  alias: Cleaning Room Change
+  description: ''
+  triggers:
+  - trigger: state
+    entity_id:
+    - sensor.roborock_qrevo_pro_current_room
+  conditions:
+  - condition: state
+    entity_id: binary_sensor.roborock_qrevo_pro_cleaning
+    state:
+    - 'on'
+  actions:
+  - action: script.new_script
+    metadata: {}
+    data:
+      title: Room Change
+      body: "\U0001F5FA Roborock has changed the room while cleaning: {{ states('sensor.roborock_qrevo_pro_current_room')
+        }}"
+  mode: single

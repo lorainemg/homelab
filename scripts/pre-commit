@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Pre-commit hook: scan staged changes for secrets with gitleaks (via Docker,
+# nothing to install). Enable with:
+#   cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+
+docker run --rm -v "$repo:/repo" ghcr.io/gitleaks/gitleaks:latest \
+  protect --source /repo --staged --verbose

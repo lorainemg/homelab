@@ -1,0 +1,174 @@
+new_script:
+  sequence:
+  - action: script.tg_notify
+    metadata: {}
+    data:
+      device: "\U0001F9F9 Roborock"
+      title: '{{ title }}'
+      body: "{{ body }}\n\n\U0001F50B {{ states('sensor.roborock_qrevo_pro_battery')
+        | int(0) }}% • \U0001F4CD {{ states('sensor.roborock_qrevo_pro_current_room')
+        or 'Unknown' }}"
+      message_thread_id: 2
+  alias: Roborok Tg Notify
+  description: TG Notifications Related to Roborock
+  fields:
+    title:
+      selector:
+        text:
+      name: title
+      description: Title of the alert
+      required: true
+    body:
+      selector:
+        text:
+          multiple: false
+          multiline: true
+tg_notify:
+  sequence:
+  - action: telegram_bot.send_message
+    data:
+      entity_id:
+      - notify.home_assistant_home_1003567301102
+      message: '<b>{{ device }} • {{ title }}</b>
+
+
+        {{ body }}
+
+        '
+      parse_mode: html
+      message_thread_id: '{{ message_thread_id | default(2) }}'
+  alias: Tg Notify
+  description: Notifies TG Home Group
+  fields:
+    device:
+      name: device
+      selector:
+        text:
+      description: Device name that triggered the alert
+      required: true
+    title:
+      selector:
+        text:
+      name: title
+      description: Title of the alert
+      required: true
+    body:
+      selector:
+        text:
+          multiple: false
+          multiline: true
+      description: Body of the alert
+    message_thread_id:
+      selector:
+        number: {}
+  icon: phu:telegram
+thermostat_script:
+  sequence:
+  - action: script.tg_notify
+    metadata: {}
+    data:
+      device: "\U0001F321️ Thermostat"
+      title: '{{ title }}'
+      body: '{{ body }}'
+      message_thread_id: 3
+  fields:
+    title:
+      selector:
+        text:
+      name: title
+      description: Title of the Notification
+      required: true
+    body:
+      selector:
+        text:
+      name: body
+      description: Body of the Notification
+      required: true
+  alias: Thermostat Tg Notify
+  description: ''
+weather_tg_notify:
+  sequence:
+  - action: script.tg_notify
+    metadata: {}
+    data:
+      device: ⛅️ Weather
+      title: '{{ title }}'
+      body: '{{ body }}'
+      message_thread_id: 3
+  fields:
+    title:
+      selector:
+        text:
+      name: title
+      required: true
+    body:
+      selector:
+        text:
+          multiline: true
+      name: body
+      required: true
+  alias: Weather Tg Notify
+  description: ''
+daily_weather_forecast_telegram:
+  alias: Daily Weather Forecast
+  description: Gets tomorrow's forecast and stores it
+  mode: single
+  sequence:
+  - target:
+      entity_id: weather.pirateweather
+    data:
+      type: daily
+    response_variable: wf
+    action: weather.get_forecasts
+  - variables:
+      tomorrow_forecast: '{{ wf[''weather.pirateweather''].forecast[0] }}'
+  - stop: Done
+    response_variable: tomorrow_forecast
+lock_tg_notify:
+  sequence:
+  - action: script.tg_notify
+    metadata: {}
+    data:
+      device: "\U0001F512 Lock"
+      title: '{{ title }}'
+      body: '{{ body }}'
+      message_thread_id: 4
+  fields:
+    title:
+      selector:
+        text:
+      name: title
+      required: true
+    body:
+      selector:
+        text:
+          multiline: true
+      name: body
+      required: true
+  alias: Lock Tg Notify
+  description: ''
+  icon: mdi:door-closed-lock
+server_tg_notify:
+  sequence:
+  - action: script.tg_notify
+    metadata: {}
+    data:
+      device: "\U0001F4BB Server"
+      title: '{{ title }}'
+      body: '{{ body }}'
+      message_thread_id: 155
+  alias: Server Tg Notify
+  description: TG Notifications Related to Home Server
+  fields:
+    title:
+      selector:
+        text:
+      name: title
+      description: Title of the alert
+      required: true
+    body:
+      selector:
+        text:
+          multiple: false
+          multiline: true
+      required: true

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Bring up the whole homelab on a fresh machine.
+#
+# Prerequisites:
+#   - Docker Engine + Compose plugin installed
+#   - A data disk mounted at $DATA_ROOT (default /data) holding service state
+#   - Each stack's .env created from its .env.example
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+STACKS=(registry caddy immich home-assistant monitoring trakt-bot)
+
+# Shared bridge network that lets Caddy reach every stack by container name.
+docker network inspect internal >/dev/null 2>&1 || docker network create internal
+
+for stack in "${STACKS[@]}"; do
+  if [[ -f "$stack/.env.example" && ! -f "$stack/.env" ]]; then
+    echo "!! $stack/.env is missing — copy $stack/.env.example and fill it in first." >&2
+    exit 1
+  fi
+done
+
+if [[ ! -f monitoring/prometheus/secrets/ha_token ]]; then
+  echo "!! monitoring/prometheus/secrets/ha_token is missing — create a long-lived" >&2
+  echo "   access token in Home Assistant and write it to that file." >&2
+  exit 1
+fi
+
+for stack in "${STACKS[@]}"; do
+  echo "==> $stack"
+  docker compose --project-directory "$stack" up -d
+done
+
+echo "All stacks up. Point your Cloudflare tunnel at caddy:80 and you're done."

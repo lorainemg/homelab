@@ -1,0 +1,24 @@
+# --- Secrets: never committed ---
+.env
+*/.env
+**/secrets/
+**/passwd
+*.key
+*.pem
+*.crt
+secrets.yaml
+
+# --- Runtime state that lives next to configs ---
+home-assistant/ha-config/.storage/
+home-assistant/ha-config/deps/
+home-assistant/ha-config/custom_components/
+home-assistant/ha-config/www/
+home-assistant/ha-config/themes/
+home-assistant/ha-config/tts/
+home-assistant/ha-config/blueprints/
+home-assistant/ha-config/*.db*
+home-assistant/ha-config/*.log*
+
+# --- OS / editor noise ---
+.DS_Store
+*.swp

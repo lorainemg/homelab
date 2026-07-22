@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node_exporter:9100']
+
+  - job_name: 'home-assistant'
+    # Long-lived HA access token, kept out of git.
+    # Create it in HA (profile -> Security -> Long-lived access tokens) and
+    # write it to prometheus/secrets/ha_token (see README).
+    authorization:
+      credentials_file: /etc/prometheus/secrets/ha_token
+    static_configs:
+      - targets: ['homeassistant:8123']
+    metrics_path: /api/prometheus
+
+  - job_name: 'immich'
+    static_configs:
+      - targets: ['immich_server:8081']
+    metrics_path: /metrics
+
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']

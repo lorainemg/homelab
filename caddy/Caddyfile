@@ -1,0 +1,23 @@
+http://immich.sussman.win {
+    reverse_proxy immich-server:2283
+}
+
+http://portainer.sussman.win {
+    reverse_proxy portainer:9000
+}
+
+http://netdata.sussman.win {
+    reverse_proxy netdata:19999
+}
+
+http://homeassistant.sussman.win {
+    reverse_proxy homeassistant:8123
+}
+
+http://registry.sussman.win {
+    reverse_proxy registry:5000
+}
+
+http://grafana.sussman.win {
+    reverse_proxy grafana:3000
+}

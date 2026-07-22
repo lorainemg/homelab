@@ -1,0 +1,114 @@
+services:
+
+  # ------------------------
+  # Home Assistant
+  # ------------------------
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    networks:
+      - internal
+    volumes:
+      # Live HA config directory (runtime state lives alongside it, so it stays
+      # on the data disk; the yaml sources are versioned in ./ha-config)
+      - ${DATA_ROOT:-/data}/home-assistant/ha-config:/config
+    ports:
+      - "8123:8123" # expose HA dashboard to the LAN
+    restart: unless-stopped
+
+  # ------------------------
+  # Mosquitto MQTT broker
+  # ------------------------
+  mosquitto:
+    image: eclipse-mosquitto
+    container_name: mosquitto
+    networks:
+      - internal
+    volumes:
+      # Contains mosquitto.conf (versioned copy in ./mosquitto) plus the
+      # passwd file, which is generated on the host and never committed.
+      - ${DATA_ROOT:-/data}/mosquitto/config:/mosquitto/config
+      - ${DATA_ROOT:-/data}/mosquitto/data:/mosquitto/data
+    restart: unless-stopped
+
+  # ------------------------
+  # Wyoming Whisper (speech-to-text)
+  # ------------------------
+  whisper:
+    image: rhasspy/wyoming-whisper
+    container_name: whisper
+    networks:
+      - internal
+    volumes:
+      - ${DATA_ROOT:-/data}/wyoming/whisper:/data
+    command: --model base-int8 --language en
+    restart: unless-stopped
+
+  # ------------------------
+  # Wyoming Piper (text-to-speech)
+  # ------------------------
+  piper:
+    image: rhasspy/wyoming-piper
+    container_name: piper
+    networks:
+      - internal
+    volumes:
+      - ${DATA_ROOT:-/data}/wyoming/piper:/data
+    command: --voice en_US-lessac-medium
+    restart: unless-stopped
+
+  # ------------------------
+  # Ollama (local LLM)
+  # ------------------------
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    networks:
+      - internal
+    volumes:
+      - ${DATA_ROOT:-/data}/ollama:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------
+  # Ollama model pull (runs once)
+  # ------------------------
+  ollama-pull:
+    image: ollama/ollama
+    container_name: ollama-pull
+    networks:
+      - internal
+    volumes:
+      - ${DATA_ROOT:-/data}/ollama:/root/.ollama
+    environment:
+      - OLLAMA_HOST=ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["ollama", "pull", "llama3.2:3b"]
+    restart: "no"
+
+  # ------------------------
+  # GitHub Copilot bridge for the HA Copilot integration
+  # https://github.com/tserra30/Github-Copilot-SDK-integration
+  # (cloned next to ha-config on the data disk)
+  # ------------------------
+  github_copilot_bridge:
+    container_name: github_copilot_bridge
+    build:
+      context: ${DATA_ROOT:-/data}/home-assistant/Github-Copilot-SDK-integration/addon
+    restart: unless-stopped
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    ports:
+      - "8080:8000"
+    networks:
+      - internal
+
+networks:
+  internal:
+    external: true
