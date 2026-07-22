@@ -98,9 +98,10 @@ Highlights:
   OpenTelemetry Collector that fans out to Tempo, Loki and an Aspire
   dashboard; Prometheus scrapes the host, every container (cAdvisor), Home
   Assistant and Immich; Grafana ties it all together.
-- **Self-hosted CI artifact flow** — the bot's images are built by .NET
-  Aspire's deployment pipeline and pushed to the self-hosted registry the
-  server then pulls from.
+- **Self-hosted CI artifact flow** — the
+  [Trakt bot](https://github.com/lorainemg/traktv-tg-bot)'s images are built
+  by .NET Aspire's deployment pipeline in GitHub Actions and pushed to the
+  self-hosted registry the server then pulls from.
 
 ## Repo layout
 
