@@ -133,6 +133,12 @@ jobs:
           esac
 
       - uses: cssnr/portainer-stack-deploy-action@v1
+        id: deploy
+        # Updating the caddy stack restarts cloudflared — the very tunnel this
+        # API call travels through — so a deploy that actually changes the
+        # stack loses its response (Cloudflare 502) even though it applied.
+        # Tolerate that for caddy only and verify out-of-band below.
+        continue-on-error: ${{ matrix.stack == 'caddy' }}
         with:
           token: ${{ secrets.PORTAINER_API_TOKEN }}
           url: ${{ secrets.PORTAINER_URL }}
@@ -144,3 +150,16 @@ jobs:
           standalone: true
           pull: true
           prune: true
+
+      - name: Verify tunnel came back
+        if: matrix.stack == 'caddy' && steps.deploy.outcome == 'failure'
+        run: |
+          for i in $(seq 1 20); do
+            sleep 15
+            if curl -fsS -o /dev/null --max-time 10 '${{ secrets.PORTAINER_URL }}/api/system/status'; then
+              echo 'Tunnel is back up — the caddy deploy applied.'
+              exit 0
+            fi
+          done
+          echo '::error::Portainer still unreachable after 5 minutes — the caddy deploy really failed.'
+          exit 1
