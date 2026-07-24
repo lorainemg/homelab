@@ -1,0 +1,5 @@
+# The config-agent image builds from the repo root — never let local
+# secrets or git internals into a build context.
+**/.env
+**/secrets/
+.git

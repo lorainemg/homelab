@@ -1,43 +1,6 @@
 services:
 
   # ------------------------
-  # Config sync (one-shot)
-  # ------------------------
-  # CI bakes ./ha-config and ./mosquitto into this image; at deploy time it
-  # copies them into the live config dirs on the data disk and exits. HA and
-  # Mosquitto wait for it, so a config change in git restarts them with the
-  # new files. Runtime state living alongside (.storage/, dbs, passwd,
-  # custom_components/, ...) is never touched; every overwritten file is
-  # first backed up to .sync-backup/ in the same directory.
-  config-sync:
-    image: ghcr.io/lorainemg/homelab/ha-config:latest
-    container_name: ha-config-sync
-    network_mode: "none"
-    volumes:
-      - ${DATA_ROOT:-/data}/home-assistant/ha-config:/config
-      - ${DATA_ROOT:-/data}/mosquitto/config:/mosquitto-config
-    restart: "no"
-
-  # ------------------------
-  # Config backup (live → git)
-  # ------------------------
-  # The reverse of config-sync: once an hour it commits UI-made edits to the
-  # watched HA yaml back to this repo, with [skip ci] so a backup never
-  # triggers a redeploy. Needs HOMELAB_PUSH_TOKEN (fine-grained PAT,
-  # contents:write on this repo only).
-  config-backup:
-    image: ghcr.io/lorainemg/homelab/config-backup:latest
-    container_name: ha-config-backup
-    init: true # the shell loop is PID 1; without this, docker stop hangs 10s
-    networks:
-      - internal
-    volumes:
-      - ${DATA_ROOT:-/data}/home-assistant/ha-config:/live:ro
-    environment:
-      - HOMELAB_PUSH_TOKEN=${HOMELAB_PUSH_TOKEN}
-    restart: unless-stopped
-
-  # ------------------------
   # Home Assistant
   # ------------------------
   homeassistant:
@@ -48,13 +11,11 @@ services:
     volumes:
       # Live HA config directory (runtime state lives alongside it, so it stays
       # on the data disk; the yaml sources are versioned in ./ha-config and
-      # written here by config-sync)
+      # written here by the config stack's config-agent, which also reloads
+      # HA over its API when they change)
       - ${DATA_ROOT:-/data}/home-assistant/ha-config:/config
     ports:
       - "8123:8123" # expose HA dashboard to the LAN
-    depends_on:
-      config-sync:
-        condition: service_completed_successfully
     restart: unless-stopped
 
   # ------------------------
@@ -67,13 +28,10 @@ services:
       - internal
     volumes:
       # Contains mosquitto.conf (versioned in ./mosquitto, written here by
-      # config-sync) plus the passwd file, which is generated on the host and
-      # never committed.
+      # the config stack's config-agent) plus the passwd file, which is
+      # generated on the host and never committed.
       - ${DATA_ROOT:-/data}/mosquitto/config:/mosquitto/config
       - ${DATA_ROOT:-/data}/mosquitto/data:/mosquitto/data
-    depends_on:
-      config-sync:
-        condition: service_completed_successfully
     restart: unless-stopped
 
   # ------------------------

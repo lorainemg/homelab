@@ -26,8 +26,13 @@ jobs:
         id: filter
         with:
           filters: |
-            caddy:
-              - 'caddy/**'
+            # ha-config/mosquitto changes deploy the config stack: that's
+            # where config-agent lives, and it applies them without touching
+            # the HA containers (reloads via the HA API instead).
+            config:
+              - 'config/**'
+              - 'home-assistant/ha-config/**'
+              - 'home-assistant/mosquitto/**'
               - '.github/workflows/deploy.yml'
             monitoring:
               - 'monitoring/**'
@@ -40,6 +45,8 @@ jobs:
               - '.github/workflows/deploy.yml'
             home-assistant:
               - 'home-assistant/**'
+              - '!home-assistant/ha-config/**'
+              - '!home-assistant/mosquitto/**'
               - '.github/workflows/deploy.yml'
 
   deploy:
@@ -49,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["caddy","monitoring","registry","immich","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
+        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config","monitoring","registry","immich","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
     env:
       IMAGE_BASE: ghcr.io/${{ github.repository }}
     steps:
@@ -60,9 +67,11 @@ jobs:
         id: images
         with:
           filters: |
-            caddy:
-              - 'caddy/Dockerfile'
-              - 'caddy/Caddyfile'
+            config_agent:
+              - 'config/Caddyfile'
+              - 'config/config-agent/**'
+              - 'home-assistant/ha-config/**'
+              - 'home-assistant/mosquitto/**'
             prometheus:
               - 'monitoring/prometheus/**'
             promtail:
@@ -71,28 +80,23 @@ jobs:
               - 'monitoring/tempo/**'
             otelcol:
               - 'monitoring/otelcol/**'
-            ha_config:
-              - 'home-assistant/ha-config/**'
-              - 'home-assistant/mosquitto/**'
-              - 'home-assistant/config-sync/**'
-            config_backup:
-              - 'home-assistant/config-backup/**'
 
       - uses: docker/login-action@v3
-        if: matrix.stack == 'caddy' || matrix.stack == 'monitoring' || matrix.stack == 'home-assistant'
+        if: matrix.stack == 'config' || matrix.stack == 'monitoring'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v6
-        if: matrix.stack == 'caddy' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.caddy == 'true')
+        if: matrix.stack == 'config' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true')
         with:
-          context: caddy
+          context: .
+          file: config/config-agent/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_BASE }}/caddy:latest
-            ${{ env.IMAGE_BASE }}/caddy:${{ github.sha }}
+            ${{ env.IMAGE_BASE }}/config-agent:latest
+            ${{ env.IMAGE_BASE }}/config-agent:${{ github.sha }}
 
       - uses: docker/build-push-action@v6
         if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.prometheus == 'true')
@@ -130,39 +134,20 @@ jobs:
             ${{ env.IMAGE_BASE }}/otelcol:latest
             ${{ env.IMAGE_BASE }}/otelcol:${{ github.sha }}
 
-      - uses: docker/build-push-action@v6
-        if: matrix.stack == 'home-assistant' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.ha_config == 'true')
-        with:
-          context: home-assistant
-          file: home-assistant/config-sync/Dockerfile
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/ha-config:latest
-            ${{ env.IMAGE_BASE }}/ha-config:${{ github.sha }}
-
-      - uses: docker/build-push-action@v6
-        if: matrix.stack == 'home-assistant' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.config_backup == 'true')
-        with:
-          context: home-assistant/config-backup
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/config-backup:latest
-            ${{ env.IMAGE_BASE }}/config-backup:${{ github.sha }}
-
       # Stack env = committed deploy.env (non-secret) + this stack's secrets.
       - name: Assemble stack env
         run: |
           case '${{ matrix.stack }}' in
-            caddy)
-              cat caddy/deploy.env > .stack.env ;;
+            config)
+              cat config/deploy.env > .stack.env
+              echo 'HOMELAB_PUSH_TOKEN=${{ secrets.HOMELAB_PUSH_TOKEN }}' >> .stack.env
+              echo 'HA_TOKEN=${{ secrets.HA_TOKEN }}' >> .stack.env ;;
             monitoring)
               echo 'GRAFANA_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}' > .stack.env
               echo 'HA_TOKEN=${{ secrets.HA_TOKEN }}' >> .stack.env ;;
             immich)
               cat immich/deploy.env > .stack.env
               echo 'DB_PASSWORD=${{ secrets.DB_PASSWORD }}' >> .stack.env ;;
-            home-assistant)
-              echo 'HOMELAB_PUSH_TOKEN=${{ secrets.HOMELAB_PUSH_TOKEN }}' > .stack.env ;;
             *)
               : > .stack.env ;;
           esac

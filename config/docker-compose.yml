@@ -1,0 +1,59 @@
+services:
+  # cloudflared (the tunnel this stack is published through) deliberately
+  # lives in ../portainer/docker-compose.yml with the rest of the control
+  # plane, so redeploying this stack can't sever CI's path to Portainer.
+
+  caddy:
+    # Plain upstream image, pinned. The Caddyfile lives in the caddy_conf
+    # volume, written by config-agent below; --watch hot-reloads it in place.
+    # A config push therefore never recreates this container — and never
+    # severs the tunnel -> caddy -> Portainer path that the deploy's own API
+    # response travels through. Only editing this file (or bumping the pin)
+    # recreates it, and that one deploy is expected to lose its response.
+    image: caddy:2.8.4
+    # Named config-caddy, NOT caddy: the DNS name every other container (and
+    # the tunnel ingress) uses comes from the service name above, and leaving
+    # the container name distinct let this stack come up alongside the old
+    # caddy stack during the rename cutover.
+    container_name: config-caddy
+    restart: unless-stopped
+    command: caddy run --config /etc/caddy/Caddyfile --adapter caddyfile --watch
+    environment:
+      - TZ=${TZ}
+      - DOMAIN_BASE=${DOMAIN_BASE}
+    volumes:
+      - caddy_conf:/etc/caddy
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+
+  # The one script container: syncs every repo-versioned config (HA yaml,
+  # mosquitto.conf, Caddyfile) from the CI-built image to the live dirs,
+  # pokes HA to reload over its API, then commits UI-made HA edits back to
+  # git hourly with [skip ci]. Deliberately NOT a depends_on of caddy: that
+  # coupling would recreate caddy whenever this image changes, which is the
+  # exact failure this design removes.
+  config-agent:
+    image: ghcr.io/lorainemg/homelab/config-agent:latest
+    container_name: config-agent
+    init: true # the shell loop is PID 1; without this, docker stop hangs 10s
+    restart: unless-stopped
+    environment:
+      - HOMELAB_PUSH_TOKEN=${HOMELAB_PUSH_TOKEN}
+      - HA_TOKEN=${HA_TOKEN}
+    volumes:
+      - caddy_conf:/live/caddy
+      - ${DATA_ROOT:-/data}/home-assistant/ha-config:/live/ha-config
+      - ${DATA_ROOT:-/data}/mosquitto/config:/live/mosquitto
+    networks:
+      - internal
+
+networks:
+  internal:
+    external: true # shared with the other stacks; created by scripts/bootstrap.sh
+
+volumes:
+  caddy_data:
+  caddy_config:
+  caddy_conf:

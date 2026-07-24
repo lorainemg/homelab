@@ -80,7 +80,7 @@ through), so no CI deploy can take it down.
 
 | Stack | What it runs | Why |
 |---|---|---|
-| [caddy/](caddy/) | Caddy 2.8 | Reverse proxy for every published service |
+| [config/](config/) | Caddy 2.8 + config-agent | Reverse proxy for every published service, plus the one container that flows repo config (HA yaml, mosquitto.conf, Caddyfile) to the live dirs and UI edits back to git |
 | [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML |
 | [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container |
@@ -113,12 +113,11 @@ Highlights:
 
 ```
 ├── .github/workflows/deploy.yml   change detection → image builds → stack deploys
-├── caddy/            docker-compose.yml, Dockerfile, Caddyfile, deploy.env
+├── config/           docker-compose.yml, Caddyfile, deploy.env
+│   └── config-agent/ the one config container: repo → live sync + hourly UI-edit backup
 ├── immich/           docker-compose.yml, deploy.env
 ├── home-assistant/   docker-compose.yml, .env.example
 │   ├── ha-config/    HA yaml config (automations, scripts, scenes, ...)
-│   ├── config-sync/  one-shot image that copies the yaml onto the data disk
-│   ├── config-backup/ hourly service committing UI yaml edits back to git
 │   └── mosquitto/    mosquitto.conf (passwd file is generated, not committed)
 ├── monitoring/       docker-compose.yml
 │   ├── prometheus/   Dockerfile, prometheus.yml, entrypoint (HA token via env)
@@ -132,12 +131,15 @@ Highlights:
 
 Conventions:
 
-- **Config baked into images, state on disk.** Pure config (Caddyfile,
-  Prometheus/OTel/Promtail/Tempo configs) is baked into thin images
+- **Config baked into images, state on disk.** Pure config
+  (Prometheus/OTel/Promtail/Tempo configs) is baked into thin images
   (`FROM upstream` + `COPY config`) built by CI and published to GHCR, so a
-  stack needs nothing from the host but its volumes. Stateful directories
-  (photo library, HA runtime, Ollama models, databases) live under a data
-  root (`/data` by default).
+  stack needs nothing from the host but its volumes. Config that has to
+  live next to runtime state (HA yaml, mosquitto.conf) or hot-reload
+  (Caddyfile) ships inside the `config-agent` image instead and is synced
+  to the live dirs at deploy time. Stateful directories (photo library, HA
+  runtime, Ollama models, databases) live under a data root (`/data` by
+  default).
 - **Secrets never in git.** Runtime secrets are GitHub Actions secrets,
   injected into each stack's environment at deploy time; committed
   `deploy.env` files hold the non-secret variables. The one file-based
@@ -161,7 +163,7 @@ Conventions:
    (Portainer → My account → Access tokens),
    `GRAFANA_ADMIN_PASSWORD`, `HA_TOKEN`, `DB_PASSWORD`,
    `HOMELAB_PUSH_TOKEN` (fine-grained PAT, contents read/write on this repo
-   only — lets config-backup push).
+   only — lets config-agent push UI-made HA edits back).
 5. Run the **Deploy** workflow (workflow_dispatch) — it builds every image
    and (re)creates every stack.
 6. Mosquitto users are the one manual step:
@@ -206,15 +208,22 @@ Every push to `main` runs the pipeline on a GitHub-hosted runner:
 `workflow_dispatch` deploys everything unconditionally — the
 fresh-server / changed-secrets button.
 
-Home Assistant's config can't be baked into the HA image itself (HA writes
-runtime state next to its yaml), so a one-shot `config-sync` service bridges
-the gap: CI bakes `ha-config/` + `mosquitto/` into a tiny image
-(`ghcr.io/lorainemg/homelab/ha-config`), and at deploy time it copies those
-files into the live config dirs before HA and Mosquitto start. Git is the
-source of truth for the versioned yaml, and the flow is two-way: the
-`config-backup` service commits UI-made edits (automations, scripts, scenes,
-helpers) back to this repo once an hour with `[skip ci]`, so nothing is lost
-between deploys; the previous version of every file a deploy overwrites is
-also kept in `.sync-backup/` next to it. Runtime state (`.storage/`,
-databases, `custom_components/`, Mosquitto's `passwd`) is never touched —
-back that layer up with HA's built-in automatic backups.
+Config that can't be baked into an app's own image flows through a single
+`config-agent` container in the config stack. CI bakes the HA yaml,
+`mosquitto.conf` and the `Caddyfile` into one image
+(`ghcr.io/lorainemg/homelab/config-agent`); at deploy time the agent copies
+the files that actually changed into the live dirs (keeping the previous
+version in `.sync-backup/` next to each), then the running services pick
+them up without being recreated: Caddy runs with `--watch` and hot-reloads
+its Caddyfile by itself, and Home Assistant is reloaded — or restarted, when
+`configuration.yaml` changed — through its API. Because no config push ever
+recreates the caddy container, a deploy can't sever the
+tunnel → caddy → Portainer path its own API response travels through (the
+only deploy still expected to lose its response is an edit to the config
+stack's compose file itself, e.g. a caddy version bump — rare and
+deliberate).
+The flow is two-way: the same agent commits UI-made edits (automations,
+scripts, scenes, helpers) back to this repo once an hour with `[skip ci]`,
+so nothing is lost between deploys. Runtime state (`.storage/`, databases,
+`custom_components/`, Mosquitto's `passwd`) is never touched — back that
+layer up with HA's built-in automatic backups.
