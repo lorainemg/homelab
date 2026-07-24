@@ -72,18 +72,20 @@ flowchart LR
 No inbound ports are open on the router: `cloudflared` maintains an
 outbound-only tunnel to Cloudflare, which routes `*.{domain}` hostnames to
 Caddy, which reverse-proxies to each service over a shared Docker bridge
-network (`internal`). TLS terminates at Cloudflare's edge.
+network (`internal`). TLS terminates at Cloudflare's edge. The tunnel runs
+in the host-managed portainer compose (the control plane CI deploys
+through), so no CI deploy can take it down.
 
 ## Stacks
 
 | Stack | What it runs | Why |
 |---|---|---|
-| [caddy/](caddy/) | Caddy 2.8 + cloudflared | Reverse proxy + zero-open-ports internet exposure |
+| [caddy/](caddy/) | Caddy 2.8 | Reverse proxy for every published service |
 | [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML |
-| [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama, Copilot bridge | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
+| [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container |
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds |
-| [portainer/](portainer/) | Portainer CE | Container management UI |
+| [portainer/](portainer/) | Portainer CE + cloudflared | Control plane: management UI/API + the tunnel that exposes everything (host-managed, never CI-deployed) |
 
 One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
@@ -115,6 +117,8 @@ Highlights:
 ├── immich/           docker-compose.yml, deploy.env
 ├── home-assistant/   docker-compose.yml, .env.example
 │   ├── ha-config/    HA yaml config (automations, scripts, scenes, ...)
+│   ├── config-sync/  one-shot image that copies the yaml onto the data disk
+│   ├── config-backup/ hourly service committing UI yaml edits back to git
 │   └── mosquitto/    mosquitto.conf (passwd file is generated, not committed)
 ├── monitoring/       docker-compose.yml
 │   ├── prometheus/   Dockerfile, prometheus.yml, entrypoint (HA token via env)
@@ -122,7 +126,7 @@ Highlights:
 │   ├── tempo/        Dockerfile, tempo.yml
 │   └── otelcol/      Dockerfile, otel-collector.yml
 ├── registry/         docker-compose.yml
-├── portainer/        docker-compose.yml
+├── portainer/        docker-compose.yml (Portainer + cloudflared), .env.example
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```
 
@@ -146,14 +150,18 @@ Conventions:
    `/data`.
 2. Restore the data directories from backup (Immich library + DB, HA config,
    etc.) — or start fresh.
-3. Create the shared network and start Portainer:
-   `docker network create internal && docker compose --project-directory portainer up -d`,
-   then expose it through a Cloudflare Tunnel (point the tunnel's public
-   hostnames — `portainer.<domain>`, `immich.<domain>`, `grafana.<domain>`, … —
-   at `http://caddy:80`; Portainer needs to be reachable by GitHub Actions).
+3. Create the shared network and start the control plane (Portainer + the
+   tunnel): copy `portainer/.env.example` to `portainer/.env`, fill in the
+   tunnel token, then
+   `docker network create internal && docker compose --project-directory portainer up -d`.
+   Point the tunnel's public hostnames — `portainer.<domain>`,
+   `immich.<domain>`, `grafana.<domain>`, … — at `http://caddy:80`
+   (Portainer needs to be reachable by GitHub Actions).
 4. Set the repo's Actions secrets: `PORTAINER_URL`, `PORTAINER_API_TOKEN`
-   (Portainer → My account → Access tokens), `CLOUDFLARE_TUNNEL_TOKEN`,
-   `GRAFANA_ADMIN_PASSWORD`, `HA_TOKEN`, `DB_PASSWORD`.
+   (Portainer → My account → Access tokens),
+   `GRAFANA_ADMIN_PASSWORD`, `HA_TOKEN`, `DB_PASSWORD`,
+   `HOMELAB_PUSH_TOKEN` (fine-grained PAT, contents read/write on this repo
+   only — lets config-backup push).
 5. Run the **Deploy** workflow (workflow_dispatch) — it builds every image
    and (re)creates every stack.
 6. Mosquitto users are the one manual step:
@@ -198,8 +206,15 @@ Every push to `main` runs the pipeline on a GitHub-hosted runner:
 `workflow_dispatch` deploys everything unconditionally — the
 fresh-server / changed-secrets button.
 
-The `home-assistant` stack is the exception: it's a Portainer git-backed
-stack (its config is bind-mounted host state, not baked into an image). One
-CE quirk applies: build contexts resolve on Portainer's filesystem, where the
-host's data root is mounted at `/external/data`, so the stack sets
-`COPILOT_BRIDGE_CONTEXT=/external/data/home-assistant/Github-Copilot-SDK-integration/addon`.
+Home Assistant's config can't be baked into the HA image itself (HA writes
+runtime state next to its yaml), so a one-shot `config-sync` service bridges
+the gap: CI bakes `ha-config/` + `mosquitto/` into a tiny image
+(`ghcr.io/lorainemg/homelab/ha-config`), and at deploy time it copies those
+files into the live config dirs before HA and Mosquitto start. Git is the
+source of truth for the versioned yaml, and the flow is two-way: the
+`config-backup` service commits UI-made edits (automations, scripts, scenes,
+helpers) back to this repo once an hour with `[skip ci]`, so nothing is lost
+between deploys; the previous version of every file a deploy overwrites is
+also kept in `.sync-backup/` next to it. Runtime state (`.storage/`,
+databases, `custom_components/`, Mosquitto's `passwd`) is never touched —
+back that layer up with HA's built-in automatic backups.

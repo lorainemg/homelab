@@ -1,14 +1,7 @@
 services:
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    container_name: cloudflared
-    restart: unless-stopped
-    environment:
-      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    command: tunnel run
-    networks:
-      - internal
-
+  # cloudflared (the tunnel this stack is published through) deliberately
+  # lives in ../portainer/docker-compose.yml with the rest of the control
+  # plane, so redeploying this stack can't sever CI's path to Portainer.
   caddy:
     # Built by .github/workflows/deploy.yml from ./Dockerfile (Caddyfile
     # baked in). Per-commit tags exist alongside :latest for rollbacks.

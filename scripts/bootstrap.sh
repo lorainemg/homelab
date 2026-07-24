@@ -9,7 +9,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-STACKS=(registry caddy immich home-assistant monitoring)
+# portainer first: it's the control plane (Portainer + the Cloudflare
+# tunnel) everything else is managed and published through.
+STACKS=(portainer registry caddy immich home-assistant monitoring)
 
 # Shared bridge network that lets Caddy reach every stack by container name.
 docker network inspect internal >/dev/null 2>&1 || docker network create internal

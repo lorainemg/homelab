@@ -1,4 +1,15 @@
 services:
+  # The tunnel lives in this host-managed compose — not in a CI-deployed
+  # stack — so a deploy can never sever the very tunnel the Portainer API
+  # calls travel through. Restart it only deliberately, from the host.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel run
+
   portainer:
     container_name: portainer
     image: portainer/portainer-ce:sts
@@ -20,3 +31,4 @@ volumes:
 networks:
   default:
     name: internal
+    external: true # shared with the other stacks; created by scripts/bootstrap.sh
