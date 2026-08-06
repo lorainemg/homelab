@@ -83,6 +83,7 @@ rejects that in favour of the service token.
 | Placement | New host-managed `komodo/`, never CI-deployed | Same tier as `portainer/`. Matches the existing rule that a deploy must not be able to break the thing performing the deploy. Bailing out is `docker compose down` plus deleting a directory |
 | Deploy mechanism | Git-repo stack — Komodo clones this repo and reads `registry/docker-compose.yml` itself | Tests the capability that actually distinguishes Komodo. Compose files stop being pushed as payloads |
 | Trigger | CI calls Komodo's API with an Access service token | Keeps Access covering the entire hostname with no unauthenticated paths. A webhook would require exempting `/listener/*` |
+| Deploy tooling | Raw `curl` in the workflow, not a marketplace action | The one published Komodo action cannot send custom headers, so it cannot pass Access. See [Why a raw `curl`](#why-a-raw-curl-and-not-a-marketplace-action) |
 | Access boundary | Cloudflare Access over all of `komodo.sussman.win`, no bypass rules | Two independent locks. Strictly better than `portainer.sussman.win`, which today has only Portainer's own login |
 | Database | MongoDB, pinned | Komodo's recommended and best-tested option. FerretDB adds a second container and a translation layer to avoid a dependency this host can carry |
 | Project name | Pinned to `docker-registry` | The live Portainer stack is named `docker-registry`, not `registry` — see [deploy.yml:168](../../../.github/workflows/deploy.yml#L168). The volume on disk is `docker-registry_registry-data` |
@@ -227,6 +228,36 @@ destination changes.
 
 Secrets are bound through `env:` rather than interpolated into the `run:`
 script, so they are never expanded into a shell command line.
+
+#### Why a raw `curl` and not a marketplace action
+
+A Komodo equivalent of
+[cssnr/portainer-stack-deploy-action](https://github.com/cssnr/portainer-stack-deploy-action)
+exists — [pandeptwidyaop/komodoactions](https://github.com/marketplace/actions/komodo-stack-deploy),
+"Komodo Stack Deploy" — and it is genuinely tidier: about seven lines, with
+`wait-for-completion` and a `status` output that would replace the `jq`
+assertion above. It was evaluated and rejected for two reasons.
+
+**It cannot send custom headers.** Its `action.yml` exposes `komodo-url`,
+`api-key`, `api-secret`, `stack-name` and a few flags — and nothing for
+arbitrary HTTP headers. With Access covering the whole hostname, the
+`CF-Access-Client-Id` / `CF-Access-Client-Secret` pair is the only way through
+the edge, so every run would be rejected by Cloudflare before reaching Komodo.
+
+This is a general consequence of the Access decision, not a quirk of one
+action: choosing "no unauthenticated paths" disqualifies any tool that cannot
+inject headers. Under a webhook-plus-bypass design this action would work fine.
+The verbosity of the `curl` is the recurring price of the security boundary.
+
+**Its supply-chain profile is wrong for these credentials.** One star, no
+forks, single maintainer, last pushed 2025-12-25; a composite action that runs
+`npm ci` and executes Node at workflow time. It would receive both the Komodo
+API key *and* the Access service token — collapsing into one dependency the two
+independent locks that motivated this design.
+
+If the verdict is to migrate the remaining stacks, factor this `curl` into a
+local composite action under `.github/actions/` so each stack costs a few
+lines. Not worth doing for a single stack.
 
 No compose file and no environment are transmitted — only the instruction to
 deploy. That is the whole point of the git-repo model.
