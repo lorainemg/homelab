@@ -84,8 +84,9 @@ through), so no CI deploy can take it down.
 | [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML |
 | [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container |
-| [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds |
+| [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. The one stack **not** deployed by CI: Komodo pulls it from this repo on a GitHub webhook |
 | [portainer/](portainer/) | Portainer CE + cloudflared | Control plane: management UI/API + the tunnel that exposes everything (host-managed, never CI-deployed) |
+| [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |
 
 One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
@@ -124,8 +125,9 @@ Highlights:
 │   ├── promtail/     Dockerfile, promtail.yml
 │   ├── tempo/        Dockerfile, tempo.yml
 │   └── otelcol/      Dockerfile, otel-collector.yml
-├── registry/         docker-compose.yml
+├── registry/         docker-compose.yml (deployed by Komodo, not CI)
 ├── portainer/        docker-compose.yml (Portainer + cloudflared), .env.example
+├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```
 
