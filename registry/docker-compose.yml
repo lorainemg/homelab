@@ -1,3 +1,6 @@
+# Deployed by Komodo from this repo on a GitHub webhook, not by CI. The Komodo
+# Stack is named docker-registry and pins project_name to match, so compose
+# reattaches to the existing docker-registry_registry-data volume.
 services:
   registry:
     image: registry:2
