@@ -82,7 +82,7 @@ separate server, which is why its backup story is "copy one volume."
 | Trigger | GitHub webhook straight to Komodo | `registry` leaves CI entirely — no deploy step, no API call, no new Actions secrets. The strongest possible test of the GitOps claim |
 | Authentication | Komodo's own login, plus the webhook HMAC secret | Parity with how `portainer.sussman.win` is exposed today. Additional edge authentication was considered and rejected: it is disproportionate for a two-week evaluation of a non-load-bearing stack, and it would disqualify most Komodo tooling |
 | Database | MongoDB, pinned | Komodo's recommended and best-tested option. FerretDB adds a container and a translation layer to avoid a dependency this host can carry |
-| Project name | Pinned to `docker-registry` | The live Portainer stack is named `docker-registry`, not `registry` — see [deploy.yml:168](../../../.github/workflows/deploy.yml#L168). The volume on disk is `docker-registry_registry-data` |
+| Project name | Pinned to `docker-registry` | The live Portainer stack is named `docker-registry`, not `registry` — see [deploy.yml:160](../../../.github/workflows/deploy.yml#L160). The volume on disk is `docker-registry_registry-data` |
 | Portainer | Stays running and untouched | It manages four live stacks, and it is the rollback target |
 | Decision date | 14 days after the canary deploys | Without a date, "evaluating" becomes "permanently running two control planes" |
 
@@ -175,7 +175,7 @@ Created once in Komodo's UI, configured as:
 | `branch` | `main` |
 | `file_paths` | `["registry/docker-compose.yml"]` |
 | `run_directory` | repo root |
-| `environment` | empty — `registry` has no secrets, per [deploy.yml:159-161](../../../.github/workflows/deploy.yml#L159-L161) |
+| `environment` | empty — `registry` has no secrets, per [deploy.yml:151-152](../../../.github/workflows/deploy.yml#L151-L152) |
 | `auto_update` | `false` — image updates stay deliberate |
 
 `project_name` is set redundantly on purpose. It is the one field whose
@@ -216,7 +216,7 @@ So:
 - Have the `changes` job emit a second output — `stacks` minus `registry` —
   and point the deploy matrix at it.
 - Delete the `registry`/`docker-registry` name rewrite at
-  [deploy.yml:168](../../../.github/workflows/deploy.yml#L168), which now has
+  [deploy.yml:160](../../../.github/workflows/deploy.yml#L160), which now has
   no remaining caller.
 
 The `registry` paths-filter entry itself can also go, since nothing in the
