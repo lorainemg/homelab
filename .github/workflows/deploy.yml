@@ -37,9 +37,6 @@ jobs:
             monitoring:
               - 'monitoring/**'
               - '.github/workflows/deploy.yml'
-            registry:
-              - 'registry/**'
-              - '.github/workflows/deploy.yml'
             immich:
               - 'immich/**'
               - '.github/workflows/deploy.yml'
@@ -56,7 +53,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config","monitoring","registry","immich","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
+        # registry is deliberately absent: the docker-registry stack is
+        # deployed by Komodo straight from this repo, not through Portainer.
+        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config","monitoring","immich","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
     env:
       IMAGE_BASE: ghcr.io/${{ github.repository }}
     steps:
@@ -157,7 +156,7 @@ jobs:
           token: ${{ secrets.PORTAINER_API_TOKEN }}
           url: ${{ secrets.PORTAINER_URL }}
           endpoint: 3
-          name: ${{ matrix.stack == 'registry' && 'docker-registry' || matrix.stack }}
+          name: ${{ matrix.stack }}
           type: file
           file: ${{ matrix.stack }}/docker-compose.yml
           env_file: .stack.env

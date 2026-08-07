@@ -447,11 +447,15 @@ to:
 Run (local repo):
 
 ```bash
-python3 -c "import yaml,sys; d=yaml.safe_load(open('.github/workflows/deploy.yml')); print('YAML OK')"
-grep -c "registry" .github/workflows/deploy.yml
+python3 -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml')); print('YAML OK')"
+grep -nE "'registry/\*\*'|\"registry\"|== 'registry'|docker-registry" .github/workflows/deploy.yml
 ```
 
-Expected: `YAML OK`, then `0`. Any non-zero count means a reference survived — find it before continuing.
+Expected: `YAML OK`, then no matches.
+
+Do **not** grep for the bare word `registry` — line 86 is
+`registry: ghcr.io`, the GHCR login for `docker/login-action`, and it must
+stay. Only the *stack-level* references are being removed.
 
 - [ ] **Step 5: Commit and push to `main`**
 
