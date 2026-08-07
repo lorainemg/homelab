@@ -1,0 +1,76 @@
+# Komodo — second control plane, under evaluation alongside Portainer.
+#
+# Host-managed like portainer/: brought up by hand with
+#   docker compose --project-directory komodo up -d
+# and deliberately absent from .github/workflows/deploy.yml, so no CI deploy
+# can break the thing performing deploys.
+services:
+  mongo:
+    image: mongo:8
+    container_name: komodo-mongo
+    # Excludes this container from Komodo's own "Stop All Containers" action.
+    # Without it, one misclick in the UI stops the database out from under Core.
+    labels:
+      komodo.skip:
+    command: --quiet --wiredTigerCacheSizeGB 0.25
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${KOMODO_DATABASE_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
+    networks:
+      - komodo
+
+  core:
+    image: ghcr.io/moghtech/komodo-core:2.3.1
+    container_name: komodo-core
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    # No ports: published. Caddy reaches this over `internal`, so nothing on
+    # the LAN can bypass the reverse proxy by hitting a host port.
+    env_file: ./.env
+    environment:
+      KOMODO_DATABASE_ADDRESS: komodo-mongo:27017
+    volumes:
+      # Core generates a keypair here; periphery reads it from the same volume.
+      - keys:/config/keys
+      - ${KOMODO_BACKUPS_PATH:-/etc/komodo/backups}:/backups
+    networks:
+      # `komodo` for its own database and agent; `internal` only so Caddy can
+      # resolve komodo-core by name.
+      - komodo
+      - internal
+
+  periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.3.1
+    container_name: komodo-periphery
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - core
+    env_file: ./.env
+    volumes:
+      - keys:/config/keys
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/proc
+      # Identical path inside and outside the container, on purpose. Docker
+      # resolves bind paths on the host, so a mismatch here breaks stack
+      # deploys confusingly. https://github.com/moghtech/komodo/discussions/180
+      - ${PERIPHERY_ROOT_DIRECTORY:-/etc/komodo}:${PERIPHERY_ROOT_DIRECTORY:-/etc/komodo}
+    networks:
+      - komodo
+
+volumes:
+  mongo-data:
+  mongo-config:
+  keys:
+
+networks:
+  komodo:
+    name: komodo
+  internal:
+    external: true # shared with the other stacks; created by scripts/bootstrap.sh
