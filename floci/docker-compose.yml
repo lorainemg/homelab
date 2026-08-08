@@ -23,6 +23,12 @@ services:
       - floci-data:/app/data
     environment:
       FLOCI_STORAGE_MODE: persistent
+      # The service reconciler runs without a request context and only sees
+      # the default account's resources — a service created under any other
+      # account is never scheduled (found 2026-08-08, see the spec's Results).
+      # Pointing the default account at our access key ID makes the reconciler
+      # and our credentialed calls share one namespace.
+      FLOCI_DEFAULT_ACCOUNT_ID: ${FLOCI_ACCESS_KEY_ID}
       # Hardcoded literal handed to spawned containers; must equal the pinned
       # network name below or spawned containers land where floci can't reach.
       FLOCI_SERVICES_DOCKER_NETWORK: floci_default
