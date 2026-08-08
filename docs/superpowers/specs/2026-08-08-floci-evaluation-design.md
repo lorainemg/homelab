@@ -123,12 +123,11 @@ services:
   floci:
     image: floci/floci:1.6.0
     restart: unless-stopped
-    env_file: ./.env
     ports:
       - "4566:4566"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./data:/app/data
+      - floci-data:/app/data
     environment:
       FLOCI_STORAGE_MODE: persistent
       FLOCI_SERVICES_DOCKER_NETWORK: floci_default
@@ -144,7 +143,6 @@ services:
     image: floci/floci-ui:0.2.0
     restart: unless-stopped
     depends_on: [floci]
-    env_file: ./.env
     ports:
       - "127.0.0.1:4500:4500"
     environment:
@@ -154,10 +152,22 @@ services:
       AWS_SECRET_ACCESS_KEY: ${FLOCI_SECRET_ACCESS_KEY}
     networks: [floci_default]
 
+volumes:
+  floci-data:
+
 networks:
   floci_default:
     name: floci_default
 ```
+
+Credentials are not in the file and there is no `env_file`: Komodo's periphery
+deploys from a git clone, and `.env` is gitignored, so the file would not exist
+where compose runs. The `${FLOCI_*}` references are filled by compose
+interpolation — from the Komodo Stack's `environment` field when deployed, or
+from `floci/.env` (which compose reads automatically for interpolation) when
+brought up by hand. `floci-data` is a named volume rather than upstream's
+`./data` bind for the same reason: a relative path would resolve inside
+periphery's clone volume, where a re-clone could destroy it.
 
 Five details that are load-bearing:
 
