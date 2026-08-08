@@ -1,0 +1,62 @@
+# Floci — local AWS emulator + console, under evaluation until 2026-09-05.
+# See docs/superpowers/specs/2026-08-08-floci-evaluation-design.md.
+#
+# Deployed by Komodo (stack `floci`) on a GitHub webhook, like registry/.
+# Credentials come from Komodo's stack environment (or floci/.env by hand);
+# there is no env_file because periphery's git clone never contains .env.
+services:
+  floci:
+    image: floci/floci:1.6.0
+    restart: unless-stopped
+    # Loopback until signature validation is proven to reject bad secrets
+    # (see the spec's "Implementation order"), then flipped to "4566:4566".
+    ports:
+      - "127.0.0.1:4566:4566"
+    volumes:
+      # Floci launches real containers for ECS/Lambda/RDS — root-equivalent,
+      # which is why the SigV4 secret below is load-bearing.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Named volume, not upstream's ./data: a relative bind would land inside
+      # periphery's clone volume, where a re-clone could destroy it.
+      - floci-data:/app/data
+    environment:
+      FLOCI_STORAGE_MODE: persistent
+      # Hardcoded literal handed to spawned containers; must equal the pinned
+      # network name below or spawned containers land where floci can't reach.
+      FLOCI_SERVICES_DOCKER_NETWORK: floci_default
+      FLOCI_HOSTNAME: floci
+      # Revisit before anything private flows through it — see the spec.
+      FLOCI_TLS_ENABLED: "false"
+      # The only barrier between the LAN and the Docker socket.
+      FLOCI_AUTH_VALIDATE_SIGNATURES: "true"
+    networks:
+      floci_default:
+        aliases:
+          - localhost.floci.io
+
+  floci-ui:
+    image: floci/floci-ui:0.2.0
+    restart: unless-stopped
+    depends_on: [floci]
+    # Loopback forever: the console holds the credentials and has no login,
+    # so reaching it is holding them. ssh -L 4500:localhost:4500 to use it.
+    ports:
+      - "127.0.0.1:4500:4500"
+    environment:
+      FLOCI_ENDPOINT: http://floci:4566
+      # All four are mandatory: the release image sets only PORT, and the AWS
+      # SDK refuses to sign without credentials — omit them and every panel
+      # sits empty with no error.
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: ${FLOCI_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${FLOCI_SECRET_ACCESS_KEY}
+    networks: [floci_default]
+
+volumes:
+  floci-data:
+
+networks:
+  floci_default:
+    # Pinned so Komodo's project name can't prefix it away from
+    # FLOCI_SERVICES_DOCKER_NETWORK above.
+    name: floci_default
