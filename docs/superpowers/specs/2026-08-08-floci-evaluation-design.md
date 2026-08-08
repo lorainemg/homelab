@@ -316,17 +316,13 @@ then publish 4566 to the LAN. The gate's rationale was that every other check
 passes whether or not validation is in effect — only a deliberately-bad
 credential distinguishes "guarded" from "silently open".
 
-**The gate failed, twice, and the LAN flip is permanently cancelled:**
-
-1. On `floci/floci:1.6.0`, a wrong secret was accepted. Cause: the
-   `floci.auth.validate-signatures` config only exists on `main` (landed
-   ~2026-07-11); 1.6.0 silently ignores the env var.
-2. On `floci/floci:nightly-08072026`, a wrong secret was **still** accepted —
-   for STS, S3 and ECS alike, as was a fully unsigned request. Cause, from
-   source: `validateSignatures` is referenced only by `PreSignedUrlFilter` and
-   `PreSignedUrlGenerator` — it verifies **S3 pre-signed URLs only**. General
-   SigV4 validation of API requests does not exist in floci, in any version.
-   The docs' "Enforce real signature validation" refers to pre-signed links.
+**The gate failed, on stable and nightly alike, and the LAN flip is
+permanently cancelled:** a wrong secret — and a fully unsigned request — was
+accepted for STS, S3 and ECS on both `1.6.0` and `nightly-08072026`. Cause,
+from source: `validateSignatures` is referenced only by `PreSignedUrlFilter`
+and `PreSignedUrlGenerator` — it verifies **S3 pre-signed URLs only**. General
+SigV4 validation of API requests does not exist in floci, in any version. The
+docs' "Enforce real signature validation" refers to pre-signed links.
 
 The stack was reverted to pinned `1.6.0` (the nightly bought nothing) and both
 ports stay on `127.0.0.1` behind SSH forwarding, per the gate's rule.
@@ -425,36 +421,56 @@ Recorded rather than guessed, to be answered during implementation:
 
 Run on `floci/floci:1.6.0`, canary `canary:local` (16.4MB), cluster `homelab`.
 
+**A first run produced a wrong verdict, worth recording as method.** Initially
+every service sat at `running: 0` forever — no task, no error, no event — and
+the run was written up as "floci has no scheduler". That was wrong. Reading
+`EcsService.java` showed a real reconciler (5-second `scheduleAtFixedRate`,
+start-below-desired / stop-above-desired), which forced the question of why it
+never acted. The answer: **the reconciler thread runs without a request context
+and therefore only sees the default account's (`000000000000`) services** —
+and this stack's randomly generated 12-digit access key ID had put everything
+in account `854178056057`, invisible to it. Confirmed by prediction: the same
+service created under AKID `test` launched within seconds. An upstream bug
+(cross-account reconciler blindness, silent because the per-service catch logs
+at DEBUG), worked around in this stack with
+`FLOCI_DEFAULT_ACCOUNT_ID: ${FLOCI_ACCESS_KEY_ID}` so the reconciler's
+contextless view *is* our account. Results below are from the rerun with that
+fix in place.
+
 | # | Criterion | Result |
 | --- | --- | --- |
-| 1 | Service start produces a container | **FAIL.** `create-service --desired-count 1` returned `ACTIVE`, floci logged `Created ECS service: canary` — and nothing was ever launched. `running: 0`, `pending: 0`, no events, no error, for the life of the service. Services are bookkeeping only. `run-task`, by contrast, launched a real container (`floci-ecs-<taskid>-web`) in under a second, streamed its stdout into floci's logs, and created CloudWatch log groups for it. |
-| 2 | **Crash → replacement with new hostname** | **FAIL.** `/crash` exited the `run-task` task; within ~2s floci logged `reconciled to STOPPED (all containers exited)` and removed the container. No replacement was ever started (checked at 20s and beyond). Floci's "reconcile" observes and records; it does not enforce desired state. With services never launching at all, there is nothing in floci's ECS that keeps a container alive. |
-| 3 | `describe-services` matches `docker ps` | **PASS (vacuously).** `desired: 1, running: 0` was accurate throughout; the run-task task's RUNNING→STOPPED lifecycle was tracked correctly. Accurate books, no action. |
-| 4 | Survives floci restart | **PASS for state, N/A for tasks.** The service/cluster records survived a `docker restart` of floci (persistent storage works). No tasks existed to survive. |
-| 5 | Survives host reboot | Not run — disruptive to the whole homelab, and criteria 1–2 had already decided the verdict. |
-| 6 | Visible in floci-ui | **FAIL (as predicted).** Confirmed from source: the UI's API mounts `eks`, `rds`, `ec2`, `secretsmanager`, `clouds` — no ECS route exists. |
+| 1 | Service start produces a container | **PASS** (with the account fix). `create-service --desired-count 1` → `Service reconciler started task` within one 5s tick; real container `floci-ecs-<taskId>-web`, stdout streamed to floci's log and an emulated CloudWatch stream. Without the fix: silent permanent `running: 0`. |
+| 2 | **Crash → replacement with new hostname** | **PASS.** `/crash` at 21:26:23 → task `reconciled to STOPPED` and a replacement started at 21:26:25 (~2s). New container, new hostname (`f0aaf6aabc9d` → `e100d807d624`), pid 1, uptime reset. Genuine desired-state enforcement. |
+| 3 | `describe-services` matches `docker ps` | **PASS.** `desired: 1, running: 1` per cluster, matching reality. A moment of apparent divergence (two containers for one service) turned out to be a *second* cluster's leftover service being faithfully resurrected — the books were right and the experimenter's hygiene was wrong. |
+| 4 | Survives floci restart | **PASS, with downtime.** On shutdown floci stops its task containers; on boot the reconciler re-establishes desired state with fresh containers (new IDs, ~20s gap). Service/cluster records persist across restarts. A crash-stop of floci itself would likely orphan rather than stop tasks — untested. |
+| 5 | Survives host reboot | Not run — disruptive to the whole homelab. Expected to behave like criterion 4 (restart: unless-stopped + persisted state), but that is inference, not evidence. |
+| 6 | Visible in floci-ui | **FAIL (as predicted).** Confirmed from source: the UI's API mounts `eks`, `rds`, `ec2`, `secretsmanager`, `clouds` — no ECS route exists. Hosted workloads are invisible in the console; `docker ps` and Komodo's container list are the only windows. |
 
 Incidental findings worth keeping:
 
 - Floci injects `AWS_ACCESS_KEY_ID=test` / `AWS_SECRET_ACCESS_KEY=test` /
   `AWS_SESSION_TOKEN=test` and `AWS_ENDPOINT_URL=http://floci:4566` into task
-  containers — hardcoded `test`, not the calling account's key, so a task
-  calling back into floci lands in the default account namespace
-  (`000000000000`), not the creator's (`854178056057`). A fidelity gap to
-  remember if a workload ever reads its own task credentials.
+  containers — hardcoded `test`, not the calling account's key. With the
+  default-account fix these now resolve to the same namespace, but it is
+  another face of the same account-context bug.
+- The reconciler can double-start during a task's PENDING window (observed
+  once: two tasks for desired 1 across consecutive ticks); it also does not
+  reap containers whose task record it has lost. Anything hosted on it should
+  tolerate an occasional extra instance.
 - Task containers are named `floci-ecs-<taskId>-<containerName>` and carry no
   `komodo.skip` label, confirming the Interaction hazards section.
-- Task stdout is streamed into floci's own log (`ContainerLogStreamer`) and
-  into an emulated CloudWatch log stream (`/ecs/canary/...`) — log fidelity is
-  genuinely good even where scheduling fidelity is absent.
+- Teardown is clean: `delete-service --force` + `delete-cluster` left zero
+  containers behind, both clusters.
 
-**Verdict: criterion 2 fails — floci is an AWS sandbox, not a control plane.**
-Per the Outcomes section: the hosting question is closed. Floci launches
-containers on request with real Docker fidelity (logs, env injection,
-lifecycle tracking) but has no scheduler and enforces no desired state — a
-crashed task stays dead, and a service's desired count is a number in a JSON
-file. The stack stays as an AWS learning lab: `run-task`, S3, Secrets Manager,
-RDS and the console are all real enough to learn against, over the SSH
-forwards. Nothing real will ever be hosted on it, which also means the
-host-managed promotion clause is moot. The Trakt-bot conversation, if it ever
-happens, is about real AWS.
+**Verdict: criterion 2 passes — floci's ECS is a real, if young, reconciler.**
+A crashed task is replaced in ~2 seconds with honest bookkeeping. Per the
+pre-registered Outcomes clause, the hosting question is therefore **open, not
+closed**: the next experiment would be private registry pulls
+(`repositoryCredentials` against `registry.sussman.win`), and floci must become
+host-managed before anything real moves onto it. Weighing against that, all
+found today: no request authentication of any kind, a scheduler that was
+silently account-blind until worked around, a double-start race, and a console
+that cannot show the workloads at all. The 2026-09-05 decision should weigh
+those maturity signals, not just the passing criterion. The canary, cluster and
+services were torn down after the run; the stack remains as an AWS lab either
+way.
