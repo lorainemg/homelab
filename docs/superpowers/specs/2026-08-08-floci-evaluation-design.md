@@ -124,7 +124,7 @@ services:
     image: floci/floci:1.6.0
     restart: unless-stopped
     ports:
-      - "4566:4566"
+      - "127.0.0.1:4566:4566"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - floci-data:/app/data
@@ -133,7 +133,6 @@ services:
       FLOCI_SERVICES_DOCKER_NETWORK: floci_default
       FLOCI_HOSTNAME: floci
       FLOCI_TLS_ENABLED: "false"
-      FLOCI_AUTH_VALIDATE_SIGNATURES: "true"
     networks:
       floci_default:
         aliases:
@@ -171,28 +170,23 @@ periphery's clone volume, where a re-clone could destroy it.
 
 Five details that are load-bearing:
 
-**4566 is published to the LAN; nothing else is.** Upstream's compose publishes
-~140 host ports (`4566`, `6379-6399`, `7001-7099`, `9200-9299`). The ranges stay
-unpublished — nothing connects to emulated RDS/ElastiCache/OpenSearch from
-outside yet, and `6379` would collide with Immich's Valkey. Only the API port is
-exposed, deliberately, so the AWS CLI can be driven from a laptop and other
-machines or CI can reach it later without a tunnel.
+**Both published ports bind `127.0.0.1`; the planned LAN flip was cancelled.**
+Upstream's compose publishes ~140 host ports (`4566`, `6379-6399`, `7001-7099`,
+`9200-9299`) on all interfaces. The ranges stay unpublished — nothing connects
+to emulated RDS/ElastiCache/OpenSearch from outside, and `6379` would collide
+with Immich's Valkey. The original design put 4566 on the LAN guarded by
+`FLOCI_AUTH_VALIDATE_SIGNATURES`; the implementation-order gate then proved
+(2026-08-08) that the setting **only verifies S3 pre-signed URLs** — the code
+behind it (`PreSignedUrlFilter`) is S3-specific, and no SigV4 validation of
+ordinary API requests exists in any floci version, stable or nightly. A wrong
+secret, and even a fully unsigned request, is accepted. With no credential
+check to guard a LAN port on a Docker-socket-holding service, the flip was
+cancelled per the gate's own rule. The laptop reaches both ports through
+`ssh -L 4566:localhost:4566 -L 4500:localhost:4500 <server>`.
 
-**This makes `FLOCI_AUTH_VALIDATE_SIGNATURES` load-bearing rather than defence in
-depth.** With 4566 on the LAN, the SigV4 secret is the only thing between any
-device on the network — including a webpage open in any browser in the house,
-which can POST to LAN addresses — and a service that can launch containers
-mounting the host filesystem. Two consequences follow, and neither is optional:
-
-- **No `test`/`test`.** Credentials are randomly generated, kept in `floci/.env`
-  (gitignored, with a committed `.env.example`), following the same pattern as
-  [komodo/](../../../komodo/) and [home-assistant/](../../../home-assistant/).
-- **Validation must be proven working before the port goes on the LAN.** See
-  [Implementation order](#implementation-order).
-
-The UI stays on `127.0.0.1` regardless: it holds those credentials server-side
-and has no login, so LAN-exposing 4500 would hand over everything signature
-validation is protecting.
+Randomly generated credentials are still used (never `test`/`test`) — they
+partition the account namespace and keep the habit right for real AWS, but they
+are **not** an access control.
 
 **`name: floci_default` must stay.** Komodo deploys with a compose project name,
 which normally prefixes networks to `<project>_floci_default`.
@@ -202,12 +196,9 @@ containers land where floci cannot reach them. The explicit `name:` pins it.
 Same class of hazard as the `project_name` pin in the Komodo design.
 
 **`FLOCI_TLS_ENABLED: "false"`.** Upstream defaults it on; it costs cert trust
-configuration in every SDK client. Off is defensible here but is a real
-trade now that 4566 is on the LAN: SigV4 never puts the secret on the wire, so
-plaintext does not leak credentials, but it does leak *payloads* to anyone
-sniffing the network. Acceptable while the only traffic is an nginx canary.
-**Revisit before anything real flows through it** — the moment Secrets Manager
-holds a live token or S3 holds anything private, this should be on.
+configuration in every SDK client and buys nothing on loopback + SSH (the
+tunnel already encrypts the wire). Revisit only if floci is ever exposed more
+widely.
 
 **The UI's four environment variables are mandatory.** The release Dockerfile
 sets only `PORT`. The API talks to floci through the AWS SDK, which refuses to
@@ -252,12 +243,11 @@ next experiment rather than a confound in this one.
 
 ### Working against it
 
-Driven from the laptop with the real AWS CLI. Since 4566 is on the LAN, no
-tunnel is needed for the API — point straight at the server. The console still
-requires one, because 4500 stays on loopback:
+Driven from the laptop with the real AWS CLI, over one SSH session that
+forwards both loopback ports:
 
 ```bash
-ssh -L 4500:localhost:4500 <server>     # only for the UI
+ssh -L 4566:localhost:4566 -L 4500:localhost:4500 <server>
 ```
 
 Configure the API as a named profile rather than exporting environment
@@ -267,7 +257,7 @@ variables, so it cannot leak into a shell that later talks to real AWS —
 ```ini
 [profile floci]
 region = us-east-1
-endpoint_url = http://<server>:4566
+endpoint_url = http://localhost:4566
 ```
 
 with matching keys under `[floci]` in `~/.aws/credentials`. Then every command is
@@ -318,24 +308,28 @@ hosting question. Total cost: one afternoon and one throwaway container.
 converted to host-managed *before* anything real moves onto it. Promotion is a
 separate design; nothing in this one implies it.
 
-## Implementation order
+## Implementation order — outcome (2026-08-08)
 
-The LAN binding is safe only if signature validation actually works, and
-"working" is not observable from a successful API call — an unvalidated floci
-answers happily too. So the port comes last:
+The design originally staged a LAN flip behind a gate: deploy on loopback,
+prove a correctly-signed call succeeds, prove a **wrong secret fails**, and only
+then publish 4566 to the LAN. The gate's rationale was that every other check
+passes whether or not validation is in effect — only a deliberately-bad
+credential distinguishes "guarded" from "silently open".
 
-1. Bring the stack up with `ports: ["127.0.0.1:4566:4566"]` and validation on.
-2. Confirm a correctly-signed call **succeeds** (`aws --profile floci sts
-   get-caller-identity`).
-3. Confirm a call with a **wrong secret fails**. This is the actual test — if a
-   bad secret still succeeds, validation is not in effect and the LAN binding
-   must not be applied.
-4. Confirm the UI's panels populate with the real credentials.
-5. Only then change the bind to `4566:4566` and redeploy.
+**The gate failed, twice, and the LAN flip is permanently cancelled:**
 
-Step 3 is the one worth being pedantic about. Every other step passes whether or
-not validation is on, so skipping it means discovering the setting never took
-effect at the worst possible moment.
+1. On `floci/floci:1.6.0`, a wrong secret was accepted. Cause: the
+   `floci.auth.validate-signatures` config only exists on `main` (landed
+   ~2026-07-11); 1.6.0 silently ignores the env var.
+2. On `floci/floci:nightly-08072026`, a wrong secret was **still** accepted —
+   for STS, S3 and ECS alike, as was a fully unsigned request. Cause, from
+   source: `validateSignatures` is referenced only by `PreSignedUrlFilter` and
+   `PreSignedUrlGenerator` — it verifies **S3 pre-signed URLs only**. General
+   SigV4 validation of API requests does not exist in floci, in any version.
+   The docs' "Enforce real signature validation" refers to pre-signed links.
+
+The stack was reverted to pinned `1.6.0` (the nightly bought nothing) and both
+ports stay on `127.0.0.1` behind SSH forwarding, per the gate's rule.
 
 ## Security
 
@@ -345,56 +339,38 @@ floci launch a container mounting the host filesystem, and own the machine. On a
 laptop the blast radius is the laptop. Here it is the machine holding Immich's
 photo library and Home Assistant.
 
-**Floci does support authentication, and this design enables it.** By default it
-does not validate SigV4 signatures — the access key ID is used only to partition
-accounts, and any secret is accepted. `FLOCI_AUTH_VALIDATE_SIGNATURES=true`
-turns on real signature verification, so a caller must hold the secret key to
-produce a valid request. That is genuine authentication and it is set above.
+**Floci has no request authentication.** Established empirically and from
+source during implementation (see [Implementation order](#implementation-order--outcome-2026-08-08)):
+the access key ID is used only to partition account namespaces, any secret —
+or no signature at all — is accepted, and `FLOCI_AUTH_VALIDATE_SIGNATURES`
+verifies only S3 pre-signed URLs. There is also no IAM policy enforcement, so
+even if authentication existed it would be all-or-nothing. Every request that
+reaches 4566 is trusted with the Docker socket behind it. The only access
+controls this deployment has are the loopback binds and SSH.
 
-It is not, however, sufficient to justify exposing the service, for three
-reasons:
-
-1. **There is no IAM policy enforcement.** Floci partitions resources by account
-   but never denies a call based on a policy. Authentication is therefore
-   all-or-nothing: one valid credential grants every action, including the
-   container-launching ones. The secret key is not an API credential, it is the
-   root password for this server.
-2. **The UI is a credentialed proxy and bypasses it entirely.** floci-ui holds
-   the access key server-side and signs on the caller's behalf, and has no login
-   of its own. Anyone who reaches port 4500 acts with full credentials no matter
-   how strictly floci validates signatures.
-3. **It is an opt-in control, off by default, in a six-month-old project.** Fine
-   as a layer; not something to make the only barrier between the internet and
-   root on the box holding the photo library.
-
-Enabling it is still worth doing, and not only for defence in depth: with
-validation off you learn the habit that any credentials work, which is precisely
-the wrong instinct to carry to real AWS.
+The randomly generated credentials remain worth using: they exercise the same
+profile discipline real AWS requires, and they keep the account namespace
+stable across clients. They are hygiene, not protection.
 
 Therefore:
 
 - **No Caddy route, no tunnel hostname, no DNS entry.** Not now, not "temporarily".
-- **4566 is on the LAN by choice; the SigV4 secret is the control.** Accepted
-  deliberately so the CLI, other machines and CI can reach it without a tunnel.
-  Note that a host firewall is *not* a fallback here: Docker inserts its
-  iptables rules ahead of ufw, so published ports are reachable regardless of
-  ufw rules. The interface binding and the credential are the only controls.
-- **4500 stays on `127.0.0.1`.** Verified in `packages/api/src/index.ts`: the
-  server registers CORS and a logger, then mounts its routes with **no
-  authentication guard of any kind** — no session handling exists anywhere in
-  the repo. The UI signs requests with credentials it holds server-side, so
-  reaching it is equivalent to holding them, and LAN-exposing it would defeat
-  signature validation entirely.
-- **Bring the UI's SSH forward up only when using it, then drop it.** That same
-  file sets `Access-Control-Allow-Origin: *` on every route except
+- **Both ports bind `127.0.0.1`, never the LAN.** With no request
+  authentication anywhere in floci, the interface binding is the entire access
+  control. A host firewall would not even be a fallback: Docker inserts its
+  iptables rules ahead of ufw, so a published port is reachable regardless of
+  ufw rules.
+- **4500's exposure equals 4566's.** Verified in `packages/api/src/index.ts`:
+  the UI server registers CORS and a logger, then mounts its routes with no
+  authentication guard of any kind — no session handling exists anywhere in the
+  repo. It signs requests with credentials it holds server-side, so reaching it
+  *is* holding them.
+- **Bring the SSH forwards up when working, drop them after.** That same file
+  sets `Access-Control-Allow-Origin: *` on every route except
   `/api/secretsmanager`. With no auth behind it, any page open in the browser
   can call those endpoints and read the responses — and while the forward is
   live, `http://localhost:4500` is reachable from that browser. CORS is enforced
   by browsers against pages; it is not an access control and stops nothing else.
-- **The UI binds `127.0.0.1:4500` only**, reached with
-  `ssh -L 4500:localhost:4500 <server>`. It signs requests with credentials it
-  holds server-side and has no login of its own, so reaching it *is* holding the
-  credentials.
 - If phone access is ever wanted, the only acceptable route is Caddy behind
   Cloudflare Access — the header pattern already solved during the Komodo work.
 
@@ -410,7 +386,8 @@ they appear to Komodo as unmanaged strays and a sweep would take them. This is
 survivable precisely because the canary is disposable, and is a strong argument
 against putting anything valuable behind floci while it is Komodo-deployed.
 
-**Volume growth.** `FLOCI_STORAGE_MODE: persistent` writes to `./data`. Emulated
+**Volume growth.** `FLOCI_STORAGE_MODE: persistent` writes to the `floci-data`
+volume. Emulated
 RDS/OpenSearch containers are real engines with real disk appetite. Worth a look
 at `docker system df` before and after.
 
@@ -427,13 +404,12 @@ promotion design exists. If neither, the stack comes down.
 
 Recorded rather than guessed, to be answered during implementation:
 
-- How is the expected secret registered for an access key ID under
-  `FLOCI_AUTH_VALIDATE_SIGNATURES=true`? See
-  `docs/configuration/multi-account.md` — an account map is likely required.
-  This is a **prerequisite**, not a curiosity: if validation cannot be made to
-  work, the LAN binding is not acceptable and the design falls back to loopback
-  plus an SSH forward. Empty UI panels are the expected symptom of getting it
-  wrong.
+- ~~How is the expected secret registered for an access key ID under
+  `FLOCI_AUTH_VALIDATE_SIGNATURES=true`?~~ **Answered 2026-08-08:** it isn't,
+  because the setting doesn't do that — it verifies S3 pre-signed URLs only
+  (`PreSignedUrlFilter`). No secret is ever checked for ordinary API requests,
+  in any floci version. This is what cancelled the LAN flip; see
+  [Implementation order](#implementation-order--outcome-2026-08-08).
 - Does `FLOCI_AUTH_PRESIGN_SECRET` need setting for anything used here? It
   governs pre-signed URL verification, which the canary does not exercise.
 - What does the `-compat` tag suffix denote? Undocumented; floci-ui's own compose
