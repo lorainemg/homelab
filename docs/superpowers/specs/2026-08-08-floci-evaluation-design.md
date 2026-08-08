@@ -130,6 +130,7 @@ services:
       FLOCI_SERVICES_DOCKER_NETWORK: floci_default
       FLOCI_HOSTNAME: floci
       FLOCI_TLS_ENABLED: "false"
+      FLOCI_AUTH_VALIDATE_SIGNATURES: "true"
     networks:
       floci_default:
         aliases:
@@ -264,20 +265,46 @@ separate design; nothing in this one implies it.
 
 ## Security
 
-Floci holds the Docker socket and ships with **no authentication of any kind** —
-that is a deliberate upstream design choice ("No account. No auth token."). The
-combination means anyone who can reach port 4566 can create a Lambda or ECS task,
-have floci launch a container with arbitrary mounts, and own the host. On a
+Floci holds the Docker socket, which makes anything able to call it
+root-equivalent on the host: a caller can create a Lambda or ECS task, have
+floci launch a container mounting the host filesystem, and own the machine. On a
 laptop the blast radius is the laptop. Here it is the machine holding Immich's
 photo library and Home Assistant.
+
+**Floci does support authentication, and this design enables it.** By default it
+does not validate SigV4 signatures — the access key ID is used only to partition
+accounts, and any secret is accepted. `FLOCI_AUTH_VALIDATE_SIGNATURES=true`
+turns on real signature verification, so a caller must hold the secret key to
+produce a valid request. That is genuine authentication and it is set above.
+
+It is not, however, sufficient to justify exposing the service, for three
+reasons:
+
+1. **There is no IAM policy enforcement.** Floci partitions resources by account
+   but never denies a call based on a policy. Authentication is therefore
+   all-or-nothing: one valid credential grants every action, including the
+   container-launching ones. The secret key is not an API credential, it is the
+   root password for this server.
+2. **The UI is a credentialed proxy and bypasses it entirely.** floci-ui holds
+   the access key server-side and signs on the caller's behalf, and has no login
+   of its own. Anyone who reaches port 4500 acts with full credentials no matter
+   how strictly floci validates signatures.
+3. **It is an opt-in control, off by default, in a six-month-old project.** Fine
+   as a layer; not something to make the only barrier between the internet and
+   root on the box holding the photo library.
+
+Enabling it is still worth doing, and not only for defence in depth: with
+validation off you learn the habit that any credentials work, which is precisely
+the wrong instinct to carry to real AWS.
 
 Therefore:
 
 - **No Caddy route, no tunnel hostname, no DNS entry.** Not now, not "temporarily".
 - **No `ports:` on the floci service.** Container-to-container only.
 - **The UI binds `127.0.0.1:4500` only**, reached with
-  `ssh -L 4500:localhost:4500 <server>`. It proxies straight through to the
-  unauthenticated API, so it inherits the same exposure.
+  `ssh -L 4500:localhost:4500 <server>`. It signs requests with credentials it
+  holds server-side and has no login of its own, so reaching it *is* holding the
+  credentials.
 - If phone access is ever wanted, the only acceptable route is Caddy behind
   Cloudflare Access — the header pattern already solved during the Komodo work.
 
@@ -310,6 +337,12 @@ promotion design exists. If neither, the stack comes down.
 
 Recorded rather than guessed, to be answered during implementation:
 
+- Does `FLOCI_AUTH_VALIDATE_SIGNATURES=true` break floci-ui or the `amazon/aws-cli`
+  container? Both are configured with `test`/`test`, which only produces a valid
+  signature if floci is told that secret for that access key ID — see
+  `docs/configuration/multi-account.md`. Expect to configure an account map, and
+  expect empty UI panels as the symptom if it is wrong. If it cannot be made to
+  work, record why before turning validation back off.
 - What does the `-compat` tag suffix denote? Undocumented; floci-ui's own compose
   prefers it.
 - Does floci's ECS implement `repositoryCredentials`? Deferred out of this
