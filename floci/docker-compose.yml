@@ -6,7 +6,11 @@
 # there is no env_file because periphery's git clone never contains .env.
 services:
   floci:
-    image: floci/floci:1.6.0
+    # Dated nightly, not 1.6.0: signature validation (FLOCI_AUTH_VALIDATE_
+    # SIGNATURES) landed on main ~2026-07-11 and is in no stable release yet.
+    # The date tag is immutable, so this is still a pin. Move back to the
+    # first stable release that ships validation (presumably 1.7.0).
+    image: floci/floci:nightly-08072026
     restart: unless-stopped
     # Loopback until signature validation is proven to reject bad secrets
     # (see the spec's "Implementation order"), then flipped to "4566:4566".
