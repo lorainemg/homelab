@@ -420,3 +420,41 @@ Recorded rather than guessed, to be answered during implementation:
   decisive for anything real.
 - Floci's Docker Hub tag list is dominated by nightlies and the project is
   roughly six months old. Treat that as a maturity signal when weighting results.
+
+## Results (2026-08-08)
+
+Run on `floci/floci:1.6.0`, canary `canary:local` (16.4MB), cluster `homelab`.
+
+| # | Criterion | Result |
+| --- | --- | --- |
+| 1 | Service start produces a container | **FAIL.** `create-service --desired-count 1` returned `ACTIVE`, floci logged `Created ECS service: canary` — and nothing was ever launched. `running: 0`, `pending: 0`, no events, no error, for the life of the service. Services are bookkeeping only. `run-task`, by contrast, launched a real container (`floci-ecs-<taskid>-web`) in under a second, streamed its stdout into floci's logs, and created CloudWatch log groups for it. |
+| 2 | **Crash → replacement with new hostname** | **FAIL.** `/crash` exited the `run-task` task; within ~2s floci logged `reconciled to STOPPED (all containers exited)` and removed the container. No replacement was ever started (checked at 20s and beyond). Floci's "reconcile" observes and records; it does not enforce desired state. With services never launching at all, there is nothing in floci's ECS that keeps a container alive. |
+| 3 | `describe-services` matches `docker ps` | **PASS (vacuously).** `desired: 1, running: 0` was accurate throughout; the run-task task's RUNNING→STOPPED lifecycle was tracked correctly. Accurate books, no action. |
+| 4 | Survives floci restart | **PASS for state, N/A for tasks.** The service/cluster records survived a `docker restart` of floci (persistent storage works). No tasks existed to survive. |
+| 5 | Survives host reboot | Not run — disruptive to the whole homelab, and criteria 1–2 had already decided the verdict. |
+| 6 | Visible in floci-ui | **FAIL (as predicted).** Confirmed from source: the UI's API mounts `eks`, `rds`, `ec2`, `secretsmanager`, `clouds` — no ECS route exists. |
+
+Incidental findings worth keeping:
+
+- Floci injects `AWS_ACCESS_KEY_ID=test` / `AWS_SECRET_ACCESS_KEY=test` /
+  `AWS_SESSION_TOKEN=test` and `AWS_ENDPOINT_URL=http://floci:4566` into task
+  containers — hardcoded `test`, not the calling account's key, so a task
+  calling back into floci lands in the default account namespace
+  (`000000000000`), not the creator's (`854178056057`). A fidelity gap to
+  remember if a workload ever reads its own task credentials.
+- Task containers are named `floci-ecs-<taskId>-<containerName>` and carry no
+  `komodo.skip` label, confirming the Interaction hazards section.
+- Task stdout is streamed into floci's own log (`ContainerLogStreamer`) and
+  into an emulated CloudWatch log stream (`/ecs/canary/...`) — log fidelity is
+  genuinely good even where scheduling fidelity is absent.
+
+**Verdict: criterion 2 fails — floci is an AWS sandbox, not a control plane.**
+Per the Outcomes section: the hosting question is closed. Floci launches
+containers on request with real Docker fidelity (logs, env injection,
+lifecycle tracking) but has no scheduler and enforces no desired state — a
+crashed task stays dead, and a service's desired count is a number in a JSON
+file. The stack stays as an AWS learning lab: `run-task`, S3, Secrets Manager,
+RDS and the console are all real enough to learn against, over the SSH
+forwards. Nothing real will ever be hosted on it, which also means the
+host-managed promotion clause is moot. The Trakt-bot conversation, if it ever
+happens, is about real AWS.
