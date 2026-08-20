@@ -87,7 +87,6 @@ through), so no CI deploy can take it down.
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. The one stack **not** deployed by CI: Komodo pulls it from this repo on a GitHub webhook |
 | [portainer/](portainer/) | Portainer CE + cloudflared | Control plane: management UI/API + the tunnel that exposes everything (host-managed, never CI-deployed) |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |
-| [floci/](floci/) | Floci (local AWS emulator) + its console, and a canary test service | Local AWS lab, **under evaluation** until 2026-09-05: can emulated ECS actually host a workload? Deployed by Komodo like the registry stack |
 
 One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
@@ -129,8 +128,6 @@ Highlights:
 ├── registry/         docker-compose.yml (deployed by Komodo, not CI)
 ├── portainer/        docker-compose.yml (Portainer + cloudflared), .env.example
 ├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
-├── floci/            docker-compose.yml (floci + console), .env.example
-│   └── canary/       throwaway Go service the ECS experiment observes
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```
 
