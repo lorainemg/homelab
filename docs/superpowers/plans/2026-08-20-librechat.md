@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Run LibreChat v0.8.7 at `librechat.sussman.win`, deployed by Komodo straight from this repo, backed by an existing Microsoft Foundry deployment, with images and Office/PDF attachments both working and no open signup window.
+**Goal:** Run LibreChat v0.8.7 at `librechat.sussman.win`, deployed by Komodo straight from this repo, backed by an existing Microsoft Foundry resource on its v1 API, with images and Office/PDF attachments both working and no open signup window.
 
 **Architecture:** A new `librechat/` stack (api + mongo + meilisearch + rag parser + pgvector) published through the existing Caddy + Cloudflare Tunnel path. Komodo clones this repo and runs `docker compose -p librechat` with `run_directory` set to `librechat/`, so `librechat.yaml` is bind-mounted from the clone rather than baked into an image and flowed through `config-agent`. `.github/workflows/deploy.yml` is untouched.
 
@@ -26,26 +26,37 @@
 
 ### Task 1: Confirm the Foundry deployment answers before building anything
 
-Host-only (or any machine with the key). Nothing is created here. This runs first because every symptom it catches — wrong `version`, wrong deployment name, wrong host — surfaces later as an empty model list in a UI that is otherwise perfectly healthy, which is the slowest possible way to find out.
+Host-only (or any machine with the key). Nothing is created here. This runs first because the symptoms it catches — a wrong URL, or an auth scheme the resource rejects — surface later as an empty model picker in a UI that is otherwise perfectly healthy, which is the slowest possible way to find out.
 
 **Interfaces:**
-- Produces: the three values Task 2 hardcodes — `instanceName` (or a `baseURL`), the exact deployment names, and a working `api-version`.
+- Produces: a confirmed `AZURE_BASE_URL`, and confirmation that the resource accepts `Authorization: Bearer <key>` — which is how LibreChat's OpenAI-compatible client authenticates.
 
-- [ ] **Step 1: Call the deployment directly**
+- [ ] **Step 1: Confirm `models` answers, with Bearer auth**
 
 ```bash
-curl -sS "https://<instance>.openai.azure.com/openai/deployments/<deployment>/chat/completions?api-version=2024-10-21" \
-  -H "api-key: $AZURE_API_KEY" -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"say ok"}],"max_tokens":5}'
+curl -sS "$AZURE_BASE_URL/models" -H "Authorization: Bearer $AZURE_API_KEY"
 ```
 
-A JSON completion means all four values are right. `DeploymentNotFound` means the deployment name is wrong — read it off the Azure portal's *Deployments* list rather than assuming it matches the model name, because they frequently differ. A 404 on the host itself means the resource is provisioned under `*.services.ai.azure.com` or `*.cognitiveservices.azure.com`, in which case Task 2 uses `baseURL` instead of `instanceName`.
+This is the exact call `models.fetch` makes. A JSON list means the URL and the auth scheme are both right, and its contents are the deployment names that will appear in the picker.
 
-- [ ] **Step 2: Record which models exist**
+If it returns 401 but the same request with `-H "api-key: $AZURE_API_KEY"` succeeds, the resource wants the Azure-style header. Add it in `librechat.yaml` rather than changing the URL:
 
-Only deployments that actually exist go in `librechat.yaml`. A model listed there but absent from the resource appears in the picker and fails at send time.
+```yaml
+      headers:
+        api-key: "${AZURE_API_KEY}"
+```
 
-**Verification:** a completion comes back, and the deployment names are written down.
+- [ ] **Step 2: Confirm a completion**
+
+```bash
+curl -sS "$AZURE_BASE_URL/chat/completions" \
+  -H "Authorization: Bearer $AZURE_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"<deployment-from-step-1>","messages":[{"role":"user","content":"say ok"}],"max_tokens":5}'
+```
+
+On the v1 API `model` is the deployment name, sent in the body — there is no deployment in the path and no `api-version` query parameter.
+
+**Verification:** both calls return JSON, and `AZURE_BASE_URL` is recorded for Task 4.
 
 ---
 
@@ -71,7 +82,11 @@ Derived from upstream's compose with six deliberate departures, each listed in t
 
 - [ ] **Step 2: Create `librechat/librechat.yaml` from the Task 1 values**
 
-`version: 1.3.13` (the `CONFIG_VERSION` v0.8.7 ships), one `azureOpenAI` group, and `fileConfig` limits. Note the field is `version`, not `apiVersion` — `apiVersion` is the TTS/STT schema, and the endpoint group schema at `packages/data-provider/src/config.ts:503` uses `version`. `plugins` is not a valid key on this endpoint either; the picked fields are `streamRate`, `titleConvo`, `titleMethod`, `titleModel`, `titlePrompt`, `titleTiming` and `titlePromptTemplate`.
+`version: 1.3.13` (the `CONFIG_VERSION` v0.8.7 ships), one `custom` endpoint, and `fileConfig` limits.
+
+A `custom` endpoint rather than the built-in `azureOpenAI` one, because the resource is reached through its v1 (OpenAI-compatible) API. `azureOpenAI` would build `.../openai/deployments/<name>/chat/completions?api-version=<ver>` from an instance name — a different URL shape carrying an api-version that has to be maintained.
+
+Nothing identifying goes in the file: `baseURL` and `apiKey` are both `${...}` references resolved from the container environment, and `models.fetch` pulls the deployment list from `GET <baseURL>/models` so no deployment name is committed. `models.default` is still required by the schema (min 1 entry) — use a public model name as the placeholder. `titleModel: "current_model"` avoids a second hardcoded name.
 
 - [ ] **Step 3: Create `librechat/.env.example`**
 
@@ -170,7 +185,7 @@ The signup form is gone, and `POST /api/auth/register` is rejected directly.
 
 - [ ] **Step 2: Foundry is wired correctly**
 
-A chat completes, and the model picker lists exactly the deployments from Task 1.
+A chat completes, and the model picker lists exactly the deployments Task 1 saw — which proves `models.fetch` reached `<baseURL>/models` rather than falling back to the placeholder.
 
 - [ ] **Step 3: Images work**
 

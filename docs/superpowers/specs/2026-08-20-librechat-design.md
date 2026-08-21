@@ -99,7 +99,8 @@ anyone will try when they get to document delivery.
 | Control plane | Komodo, git-repo stack on a GitHub webhook | Second stack after `docker-registry`. Lets `librechat.yaml` be bind-mounted from the clone instead of baked into an image and flowed through `config-agent` |
 | Project name | Pinned `librechat` via top-level `name:` | The hazard the komodo spec called the largest in that design. Pinning in the file makes it independent of the Komodo resource name |
 | Version | `ghcr.io/danny-avila/librechat:v0.8.7` | Upstream's compose runs `librechat-dev:latest`. This repo pins everything; `v0.8.7` is the newest published release tag |
-| Provider | Microsoft Foundry (Azure OpenAI), via `librechat.yaml` | Already owned. No second bill, and the key stays server-side |
+| Provider | Microsoft Foundry, as a `custom` endpoint on its **v1 API** | Already owned. The v1 surface is OpenAI-compatible, so the generic client fits it and there is no api-version to maintain; the built-in `azureOpenAI` endpoint builds the classic per-deployment URL instead |
+| Endpoint URL | Entirely in `${AZURE_BASE_URL}`, never a literal | The hostname identifies the Azure resource and this repo is public. `models.fetch` keeps the deployment names out too |
 | Document reading | `rag_api` + `vectordb`, `RAG_USE_FULL_CONTEXT=true` | The only way `.docx`/`.pdf` attachments parse at all. Full-context mode keeps it a parser, not a retrieval system — no embeddings provider, no embeddings key |
 | Document authoring | Out of scope | No MCP server can return a file (see Concepts). Revisited below with the three real options |
 | Search | Meilisearch, included | Conversation search is core to the product; excluding it means `SEARCH=false` and a visibly degraded UI |
@@ -177,9 +178,21 @@ with whatever gets added next.
 
 ### `librechat/librechat.yaml` (new)
 
-Holds the Foundry endpoint definition — `instanceName`, `deploymentName` and
-`apiVersion` per model group, with the key referenced as `${AZURE_API_KEY}` so
-the value stays in the environment. Also carries the `fileConfig` limits.
+Holds the Foundry endpoint definition as a `custom` endpoint, not LibreChat's
+built-in `azureOpenAI` one. The resource exposes the **v1 API** — the
+OpenAI-compatible surface at `https://<resource>.openai.azure.com/openai/v1` —
+whereas `azureOpenAI` builds
+`.../openai/deployments/<name>/chat/completions?api-version=<ver>` from an
+instance name. Different URL shape, and the v1 API has no api-version to
+maintain, so the generic OpenAI-compatible client is the correct one.
+
+Both `baseURL` and `apiKey` are `${...}` references resolved from the
+container environment
+([custom/config.ts:42](https://github.com/danny-avila/LibreChat/blob/v0.8.7/packages/api/src/endpoints/custom/config.ts#L42)).
+The whole URL is a variable rather than just the hostname fragment, because the
+hostname identifies the Azure resource and this repo is public. `models.fetch`
+pulls the deployment list from `GET <baseURL>/models` at startup, so no
+deployment name is committed either. Also carries the `fileConfig` limits.
 
 Bind-mounted read-only at `/app/librechat.yaml`. Editing it is a commit, the
 webhook fires, the stack redeploys — which is the whole point of putting this
@@ -245,10 +258,11 @@ compose project.
 Nothing is being migrated, so this is an install rather than a cutover. Ordered
 so no step depends on an unverified one.
 
-1. **Confirm the Foundry deployment works** from the host, before anything is
-   built: a `curl` against the chat completions endpoint with the key. A wrong
-   `apiVersion` or deployment name otherwise surfaces as an empty model list in
-   a UI that is otherwise perfectly healthy.
+1. **Confirm the Foundry endpoint works** from the host, before anything is
+   built: a `curl` against `<baseURL>/models` and `<baseURL>/chat/completions`
+   with the key. A wrong URL or an auth scheme the resource does not accept
+   otherwise surfaces as an empty model picker in a UI that is otherwise
+   perfectly healthy.
 2. **Merge the stack files.** Nothing deploys — Komodo has no Stack resource
    for them yet.
 3. **Add the Caddy block and the tunnel hostname.** `librechat.sussman.win`
@@ -272,7 +286,7 @@ Status badges do not count for any of these.
 |---|---|
 | The edge path works | `librechat.sussman.win` serves the login page over the tunnel |
 | Registration really is closed | The signup form is absent, and a direct `POST /api/auth/register` is rejected |
-| Foundry is wired correctly | A chat completes, and the model list matches the deployments in `librechat.yaml` |
+| Foundry is wired correctly | A chat completes, and the model picker lists the resource's real deployments — proving `models.fetch` reached `<baseURL>/models` |
 | Images work | An image attachment gets a substantive answer, not a refusal to see it |
 | Word and PDF actually parse | A `.docx` upload is answered from its real contents. This is the one that silently half-works: the failure mode is a fluent answer about garbage, so the test must use a document whose contents the tester can check |
 | State survives redeploy | Push a trivial change, let the webhook redeploy, confirm conversation history is still there — the project-name hazard, tested rather than assumed |
