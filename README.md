@@ -1,6 +1,6 @@
 # 🏠 Homelab
 
-Infrastructure-as-code for my single-node homelab: ~25 containers across five
+Infrastructure-as-code for my single-node homelab: ~30 containers across six
 Docker Compose stacks (plus a self-deploying app stack), published to the
 internet through a Cloudflare Tunnel and fully observable with a
 Grafana/Prometheus/Loki/Tempo stack.
@@ -31,6 +31,7 @@ flowchart LR
         GRAFANA[Grafana]
         PORTAINER[Portainer]
         REGISTRY[Docker registry]
+        LIBRECHAT[LibreChat]
     end
 
     CADDY --> IMMICH
@@ -38,6 +39,7 @@ flowchart LR
     CADDY --> GRAFANA
     CADDY --> PORTAINER
     CADDY --> REGISTRY
+    CADDY --> LIBRECHAT
 
     subgraph voice[Local voice & AI]
         WHISPER[Whisper STT]
@@ -87,6 +89,7 @@ through), so no CI deploy can take it down.
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. The one stack **not** deployed by CI: Komodo pulls it from this repo on a GitHub webhook |
 | [portainer/](portainer/) | Portainer CE + cloudflared | Control plane: management UI/API + the tunnel that exposes everything (host-managed, never CI-deployed) |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |
+| [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch, RAG parser + pgvector | Chat front-end over a Microsoft Foundry deployment. The second stack Komodo owns, and the first one with secrets |
 
 One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
@@ -128,6 +131,7 @@ Highlights:
 ├── registry/         docker-compose.yml (deployed by Komodo, not CI)
 ├── portainer/        docker-compose.yml (Portainer + cloudflared), .env.example
 ├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
+├── librechat/        docker-compose.yml, librechat.yaml, .env.example (deployed by Komodo)
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```
 
@@ -170,6 +174,10 @@ Conventions:
    and (re)creates every stack.
 6. Mosquitto users are the one manual step:
    `docker exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd homeassistant`
+7. LibreChat accounts are the other one. Registration is disabled on a
+   public hostname, so the first account is made from the host with
+   `docker exec -it librechat npm run create-user` — there is never a window
+   where the login page accepts signups.
 
 To run without Portainer/CI at all: copy each stack's `.env.example` to
 `.env`, fill it in, and run `./scripts/bootstrap.sh` — the compose files work
