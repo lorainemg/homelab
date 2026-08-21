@@ -57,8 +57,13 @@ services:
       CREDS_IV: ${CREDS_IV}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      # Microsoft Foundry. The endpoint shape lives in librechat.yaml; only the
-      # key is passed here, so the config file stays committable.
+      # Microsoft Foundry. The endpoint shape lives in librechat.yaml, which
+      # refers back to both of these by name. Every ${...} in that file is
+      # resolved against this environment, and an unresolved one is a hard
+      # error at request time ("Azure configuration environment variable ...
+      # was not found"), not a silent fallback — so anything librechat.yaml
+      # references has to be passed here too.
+      AZURE_INSTANCE_NAME: ${AZURE_INSTANCE_NAME}
       AZURE_API_KEY: ${AZURE_API_KEY}
       # rag_api parses .docx/.pdf/.xlsx into text. FULL_CONTEXT makes it inject
       # the whole document rather than embed and vector-search it — a parser,
