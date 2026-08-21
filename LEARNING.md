@@ -46,13 +46,14 @@ start of a session; update when a concept lands or a new gap appears.
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
   untouched so far; it is the obvious next capability after this migration.
-- Restoring Komodo's Mongo from `km database backup` — the procedure is
-  written down but has never been run.
+- Restoring Komodo's Mongo — now *run* (2026-08-20) and it works, but the
+  procedure as originally written tested the wrong thing: it copied from the
+  live database instead of opening a backup file. A test that cannot fail is
+  not a test.
 
 ## Next
 
-- Close the two unproven verdict criteria (push-to-deploy, backup restore)
-  before moving any stack that holds data.
+- Exercise a rollback from Komodo's UI — the last unproven verdict criterion.
 - Execute
   [the migration design](docs/superpowers/specs/2026-08-20-portainer-to-komodo-migration-design.md).
 

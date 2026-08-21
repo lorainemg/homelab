@@ -632,7 +632,7 @@ Closes the two verdict criteria that need setup rather than waiting: backup reco
 - Consumes: the running Komodo from Task 2.
 - Produces: a verified backup/restore path and a recorded resource baseline.
 
-- [ ] **Step 1: Take a database backup**
+- [x] **Step 1: Take a database backup**
 
 Run (on host):
 
@@ -650,34 +650,49 @@ ls -lh /etc/komodo/backups
 
 Expected: a dated backup directory or archive.
 
-- [ ] **Step 2: Restore into a throwaway Mongo and confirm the Stack is in it**
+- [x] **Step 2: Restore into a throwaway Mongo and confirm the Stack is in it**
 
-Run (on host):
+> **Corrected 2026-08-20.** The original version of this step ran
+> `km database copy` with its *source* pointed at the live `komodo-mongo`,
+> so it copied live → throwaway and never opened a backup file. It would
+> have passed while proving nothing. The restoring command is
+> `km database restore`, and it takes its target from
+> `KOMODO_CLI_DATABASE_TARGET_URI` — `KOMODO_DATABASE_ADDRESS` is ignored,
+> and the run dies with `connection refused` against `localhost:27017`.
+
+Run (on host). Restore a *scheduled nightly* backup, not the one Step 1 just
+took — the point is that the backups running unattended are recoverable:
 
 ```bash
 docker run -d --name komodo-restore-test --network komodo \
   -e MONGO_INITDB_ROOT_USERNAME=test -e MONGO_INITDB_ROOT_PASSWORD=test mongo:8
-sleep 10
+sleep 12
 docker run --rm --network komodo -v /etc/komodo/backups:/backups \
-  -e KOMODO_DATABASE_ADDRESS=komodo-mongo:27017 \
-  -e KOMODO_DATABASE_USERNAME="$(grep '^KOMODO_DATABASE_USERNAME=' komodo/.env | cut -d= -f2-)" \
-  -e KOMODO_DATABASE_PASSWORD="$(grep '^KOMODO_DATABASE_PASSWORD=' komodo/.env | cut -d= -f2-)" \
-  -e KOMODO_CLI_DATABASE_TARGET_URI=mongodb://test:test@komodo-restore-test:27017 \
+  -e KOMODO_CLI_DATABASE_TARGET_URI="mongodb://test:test@komodo-restore-test:27017" \
   -e KOMODO_CLI_DATABASE_TARGET_DB_NAME=komodo \
-  ghcr.io/moghtech/komodo-cli km database copy -y
-docker exec komodo-restore-test mongosh -u test -p test --quiet \
-  --eval 'db.getSiblingDB("komodo").Stack.find({},{name:1,_id:0}).toArray()'
+  ghcr.io/moghtech/komodo-cli km database restore -r <YYYY-MM-DD_HH-MM-SS> -y
+docker exec komodo-restore-test mongosh -u test -p test --quiet --eval '
+  const db2 = db.getSiblingDB("komodo");
+  printjson(db2.Stack.find({},{name:1,"config.project_name":1,_id:0}).toArray());'
 ```
 
-Expected: output containing `docker-registry`. That is the criterion — the backup reproduces the resource, not merely that a file exists.
+Expected: the Stack resources come back **with their `project_name`** — that
+is the criterion. A restore that reproduces the name but loses `project_name`
+would reattach the stack to a fresh empty volume.
 
-- [ ] **Step 3: Tear down the restore test**
+**Result (2026-08-20):** restored the `2026-08-20_01-00-01` nightly into an
+emptied throwaway Mongo. 21 collections; `docker-registry`
+(`project_name: docker-registry`) and `floci` (`project_name: floci`) both
+present, along with the `Local` server. `floci` is the proof it is a real
+point-in-time snapshot — that stack was torn down after the backup was taken.
+
+- [x] **Step 3: Tear down the restore test**
 
 ```bash
 docker rm -f komodo-restore-test
 ```
 
-- [ ] **Step 4: Record the resource baseline**
+- [x] **Step 4: Record the resource baseline**
 
 Run (on host):
 
@@ -688,7 +703,12 @@ docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}' \
 
 Note the total memory. This is the number the "resource cost is tolerable" criterion is judged against at the decision date.
 
-- [ ] **Step 5: Document it in the README**
+**Result (2026-08-20):** `mongod` 149.6 MB, `core` 63.6 MB, `periphery` 20.8 MB
+— 234 MB and ~2% CPU combined, on a host using 5.74 GB of 18.83 GB. Backups
+have been running unattended nightly at 01:00 since 2026-08-08, with
+`max_backups: 14`.
+
+- [x] **Step 5: Document it in the README**
 
 Add a row to the Stacks table in `README.md`:
 

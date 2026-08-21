@@ -108,21 +108,18 @@ criteria and a decision date of 2026-08-20. Their state on that date:
 |---|---|---|
 | Push deploys with no CI work | **Partly shown** | The GitHub webhook is `active` with last response `200`, and Komodo correctly *declines* to act on pushes that do not touch the stack's files — ~14 pushes to `main` since 2026-08-07 produced zero deploys, which is `webhook_force_deploy: false` behaving as designed. What the update log cannot distinguish is whether the one real deploy was webhook-triggered or hand-run |
 | Rollback is fast from the UI | **Not exercised** | The implementation plan flagged this as untested and it has stayed that way |
-| Backups actually restore | **Not exercised** | Task 8 of the plan is unticked and the resource baseline it would have written to the README is absent, which suggests the restore test never ran |
+| Backups actually restore | **Passed** | Exercised 2026-08-20: the `2026-08-20_01-00-01` scheduled nightly restored into an emptied throwaway Mongo and reproduced both Stack resources *with their `project_name`*, plus the `Local` server. Backups have run unattended nightly since 2026-08-08 (`max_backups: 14`). Note that [Task 8 Step 2 of the evaluation plan](../plans/2026-08-06-komodo-evaluation.md) had to be corrected first: as written it ran `km database copy` from the *live* database and never opened a backup file |
 | Resource cost is tolerable | **Passed** | Measured 2026-08-20: `mongod` 149.6 MB, `core` 63.6 MB, `periphery` 20.8 MB — 234 MB and ~2% CPU combined, against a host using 5.74 GB of 18.83 GB |
 
-Two of four are unproven, and they are the two that matter most when the stacks
-being moved hold data rather than a rebuildable image cache. Both are cheap to
-close and neither requires this migration to have started:
+One remains open, and it is the cheaper of the two:
 
-- **Push-to-deploy:** a whitespace commit touching `registry/docker-compose.yml`
-  should produce a Komodo deploy with no Actions run.
-- **Backup restore:** Task 8 Steps 1–3 of the evaluation plan, unchanged —
-  `km database backup`, restore into a throwaway Mongo, confirm the Stack
-  resource is present in it.
+- **Rollback from the UI** — redeploy an older commit's compose from Komodo's
+  Stack page and time it. Worth closing before `immich` moves, since it is the
+  procedure you would reach for at exactly the wrong moment.
 
-The migration below assumes both are closed first. `immich` in particular
-should not move while the control plane's own restore path is untested.
+The **push-to-deploy** criterion can be finished at the same time: a whitespace
+commit touching `registry/docker-compose.yml` should produce a Komodo deploy
+with no Actions run. Neither blocks starting the migration at `monitoring`.
 
 ## Architecture
 
