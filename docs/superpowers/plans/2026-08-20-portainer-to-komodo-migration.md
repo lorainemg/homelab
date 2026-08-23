@@ -602,7 +602,7 @@ ssh home "curl -sG 'http://localhost:9090/api/v1/query' --data-urlencode 'query=
 
 Expected: a non-zero byte count for the token, `prometheus.yml` present, and the Home Assistant scrape target reporting. A zero-byte token means `HA_TOKEN` is missing from `monitoring/.env` on the host; a *missing* file means the `/run/prometheus` tmpfs is missing from the compose file.
 
-- [ ] **Step 11: Verify a config edit reaches the container without a build**
+- [x] **Step 11: Verify a config edit reaches the container without a build**
 
 The point of the whole exercise. Change something harmless and observable in `monitoring/prometheus/prometheus.yml` — e.g. `scrape_interval` — commit, push to `main`, and wait for the webhook.
 
@@ -612,7 +612,7 @@ ssh home 'docker exec prometheus grep scrape_interval /etc/prometheus/prometheus
 
 Expected: the new value, with no GitHub Actions run having occurred. Revert the change and push again once confirmed.
 
-- [ ] **Step 12: Add the GitHub webhook**
+- [x] **Step 12: Add the GitHub webhook**
 
 Repo Settings → Webhooks → Add webhook.
 
@@ -625,7 +625,7 @@ Repo Settings → Webhooks → Add webhook.
 
 If Step 11 already deployed without this, the listener was reached some other way — check before assuming it works.
 
-- [ ] **Step 13: Commit the README change** *(repo)*
+- [x] **Step 13: Commit the README change** *(repo)*
 
 Amend the `monitoring/` row's "Why" in the README stack table to note it is deployed by Komodo from this repo on a webhook, not by CI.
 
