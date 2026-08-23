@@ -49,7 +49,7 @@ The last unproven verdict criterion, and the procedure you would reach for at th
 - Consumes: the running `docker-registry` Stack.
 - Produces: a timed, written-down rollback procedure that Tasks 3–6 rely on as their escape hatch.
 
-- [ ] **Step 1: Record the currently deployed commit** *(API)*
+- [x] **Step 1: Record the currently deployed commit** *(API)*
 
 ```bash
 curl -s -X POST https://komodo.sussman.win/read -H "Authorization: Bearer $JWT" \
@@ -64,11 +64,15 @@ is file-scoped (`webhook_force_deploy: false`), so commits that do not touch
 `registry/` never trigger a redeploy. Step 5 rolls *forward to `latest_hash`*,
 which is not necessarily the `deployed_hash` you just recorded.
 
-- [ ] **Step 2: Pin the Stack to an older commit and redeploy from the UI**
+- [x] **Step 2: Pin the Stack to an older commit and redeploy from the UI**
 
 In Komodo's UI, open the `docker-registry` Stack → Config, leave **branch** as
 `main`, and set the **commit** field to an older commit hash that touched
-`registry/`. Save, and hit Deploy. Start a timer when you click Deploy.
+`registry/`. Save, **then** hit Deploy — these are two separate actions, and
+saving alone deploys nothing: it rewrites the config and refreshes the git
+cache, so `latest_hash` moves to the target while `deployed_hash` stays where
+it was. That gap between the two fields is the only sign the Deploy click is
+still owed. Start a timer when you click Deploy.
 
 **Use the `commit` field, not the `branch` field.** Komodo interpolates `branch`
 straight into `git clone <url> <path> -b <branch>`, and git's `-b` accepts only
@@ -85,7 +89,7 @@ against a real repo — an earlier draft of this plan asserted the opposite.
 
 The criterion from the evaluation spec is *under a minute, with no git revert and no CI run*.
 
-- [ ] **Step 3: Confirm the older compose actually deployed** *(API)*
+- [x] **Step 3: Confirm the older compose actually deployed** *(API)*
 
 ```bash
 curl -s -X POST https://komodo.sussman.win/read -H "Authorization: Bearer $JWT" \
@@ -96,7 +100,7 @@ curl -s -X POST https://komodo.sussman.win/read -H "Authorization: Bearer $JWT" 
 
 Expected: `deployed_hash` is the older commit, not the one from Step 1.
 
-- [ ] **Step 4: Confirm the registry still has its data**
+- [x] **Step 4: Confirm the registry still has its data**
 
 ```bash
 curl -s https://registry.sussman.win/v2/_catalog
@@ -104,7 +108,7 @@ curl -s https://registry.sussman.win/v2/_catalog
 
 Expected: a non-empty `repositories` list. A rollback that empties the volume is a failed rollback, not a successful one.
 
-- [ ] **Step 5: Roll forward again**
+- [x] **Step 5: Roll forward again**
 
 Clear the **commit** field in the UI, leaving **branch** as `main`, Deploy, and
 confirm via the command in Step 3 that `deployed_hash` is now `main`'s tip —
@@ -116,7 +120,7 @@ at a glance: the Stack still reports `branch: main`, webhooks still fire, and
 every deploy still reports success — while the stack stays frozen on the pinned
 commit indefinitely. Unpinning is the second half of the rollback procedure.
 
-- [ ] **Step 6: Write the result into the evaluation plan** *(repo)*
+- [x] **Step 6: Write the result into the evaluation plan** *(repo)*
 
 In `docs/superpowers/plans/2026-08-06-komodo-evaluation.md`, under `## Verdict checkpoint — 2026-08-20`, replace the `Rollback is fast from the UI | Not yet exercised` row's note with the measured time and the exact UI path used.
 

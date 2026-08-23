@@ -737,9 +737,33 @@ Not an implementation task. On the decision date, check the four criteria from t
 | Criterion | Where it was measured |
 |---|---|
 | Push deploys with no CI work | Task 7 Step 5 |
-| Rollback is fast from the UI | Not yet exercised — redeploy an older commit from Komodo's Stack page and time it |
+| Rollback is fast from the UI | Exercised 2026-08-23 on `docker-registry` — **2.96 s**, no git revert, no CI run |
 | Backups actually restore | Task 8 Step 2 |
 | Resource cost is tolerable | Task 8 Step 4 |
+
+**The rollback, as actually performed.** Stack → Config → set **commit** to the
+target hash, leaving **branch** as `main`. Save, *then* **Deploy** — these are
+two separate actions. Saving alone only rewrites the config and refreshes the
+git cache: `latest_hash` moves to the target while `deployed_hash` stays put,
+and nothing is deployed. That gap between the two fields is the only thing
+telling you the click is still owed.
+
+Do **not** put the hash in the **branch** field. It is interpolated into
+`git clone <url> <path> -b <branch>`, and git's `-b` takes only branch names and
+tags; on the pull path it instead fails at `git pull --rebase --force origin
+<hash>`, *after* `Checkout branch` has already reported success. The **commit**
+field is interpolated into `git reset --hard <commit>`, which is the mechanism
+that works — it appears as the `Set commit` stage in the update log.
+
+Afterwards, clear the **commit** field and Deploy again. A pin left in place is
+invisible at a glance — `branch` still reads `main`, webhooks still fire, deploys
+still report success — and the stack stays frozen on the pinned commit
+indefinitely.
+
+Verified by data assertions rather than a health check: `deployed_hash` moved to
+the target, the container's `com.docker.compose.config-hash` returned to exactly
+its pre-change value (a byte-identical revert, not merely a different one), and
+`/v2/_catalog` stayed non-empty.
 
 ## Rollback
 
