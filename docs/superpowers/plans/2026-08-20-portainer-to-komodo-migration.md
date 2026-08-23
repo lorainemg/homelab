@@ -706,7 +706,7 @@ ssh home 'docker inspect immich_server --format "{{range .Mounts}}{{.Source}} ->
 
 Expected to include `/data/immich/library` and, on the postgres container, `/data/immich/postgres`. These are what actually hold the photos.
 
-- [ ] **Step 5: Delete the Portainer stack and verify the data directories are untouched**
+- [x] **Step 5: Delete the Portainer stack and verify the data directories are untouched**
 
 Portainer → Stacks → `immich` → Delete, then:
 
@@ -716,7 +716,13 @@ ssh home 'du -sh /data/immich/library /data/immich/postgres; docker volume ls --
 
 Expected: both directories still hold their previous size, and `immich_model-cache` still listed. **If the library directory is empty or gone, stop.**
 
-- [ ] **Step 6: Create the Komodo Stack** *(API)*
+- [x] **Step 6: Create the Komodo Stack** *(API)*
+
+Unlike `monitoring`, this stack takes the plain config — no `webhook_force_deploy`
+and no `post_deploy`. `immich/docker-compose.yml` has zero `./` mounts, so nothing
+reaches these containers from the checkout except the compose file itself, and
+that file *is* in `file_paths`, which the default "if changed" check reads. There
+is no config to reload and nothing the default check would miss.
 
 ```bash
 curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
@@ -740,7 +746,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 }' | python3 -c 'import sys,json;print(json.load(sys.stdin).get("name"))'
 ```
 
-- [ ] **Step 7: Place `.env` and deploy** *(host)*
+- [x] **Step 7: Place `.env` and deploy** *(host)*
 
 Unlike `monitoring`, do **not** deploy before the `.env` exists — Immich's Postgres would initialise with an empty password and the server would then fail to connect with the real one.
 
@@ -762,7 +768,7 @@ curl -s -X POST https://komodo.sussman.win/execute -H "Authorization: Bearer $JW
   -H 'Content-Type: application/json' -d '{"type":"DeployStack","params":{"stack":"immich"}}' >/dev/null
 ```
 
-- [ ] **Step 8: Verify the library, not the containers**
+- [x] **Step 8: Verify the library, not the containers**
 
 ```bash
 curl -s https://immich.sussman.win/api/server/statistics -H "x-api-key: $IMMICH_API_KEY" \
@@ -771,11 +777,11 @@ curl -s https://immich.sussman.win/api/server/statistics -H "x-api-key: $IMMICH_
 
 Expected: the counts from Step 1. Immich backed by an empty database starts perfectly healthy and shows zero assets — that is the failure this asserts against.
 
-- [ ] **Step 9: Add the GitHub webhook**
+- [x] **Step 9: Add the GitHub webhook**
 
 Payload URL `https://komodo.sussman.win/listener/github/stack/immich/deploy`, same secret and settings as Task 4 Step 12.
 
-- [ ] **Step 10: Commit the README change** *(repo)*
+- [x] **Step 10: Commit the README change** *(repo)*
 
 ```bash
 git add README.md && git commit -m "note that komodo deploys immich now"
