@@ -802,7 +802,7 @@ The stack with no named volumes at all — every piece of state is bind-mounted 
 - Consumes: the Komodo Stack pattern from Task 4.
 - Produces: a Komodo Stack named `home-assistant` with `project_name: home-assistant`.
 
-- [ ] **Step 1: Capture the baseline**
+- [x] **Step 1: Capture the baseline**
 
 ```bash
 curl -s -H "Authorization: Bearer $HA_TOKEN" https://home-assistant.sussman.win/api/states \
@@ -810,11 +810,32 @@ curl -s -H "Authorization: Bearer $HA_TOKEN" https://home-assistant.sussman.win/
 ssh home 'docker ps --filter label=com.docker.compose.project=home-assistant --format "{{.Names}}"'
 ```
 
-Write down the entity count and the container list (expect six: home assistant, mosquitto, whisper, piper, ollama, ollama-pull).
+Write down the entity count and the container list (expect six: home assistant,
+mosquitto, whisper, piper, ollama, ollama-pull; `ollama-pull` is a one-shot image
+puller and correctly shows `Exited (0)`).
 
-- [ ] **Step 2: Take `home-assistant` out of CI, merge, and push** *(repo)*
+Measured 2026-08-23, before the cutover: **1262 entities**, `.storage` **40 files**,
+`ha-config` **541.6 M**, ollama models **6.0 G**. Afterwards: 1264 entities,
+`.storage` 40 files — the +2 is HA registering entities fresh on restart.
 
-The `workflow_dispatch` list becomes `fromJSON('["config"]')`; `home-assistant` joins the dynamic-list exclusion. Note the paths-filter entry for this stack has exclusions (`!home-assistant/ha-config/**`, `!home-assistant/mosquitto/**`) because those paths belong to the `config` stack's image — leave the `config` filter's use of them alone.
+`ha-config` reads 537.5 M after the stop, ~4 M below the baseline. That is not
+loss: HA's recorder is SQLite in WAL mode, and a clean shutdown checkpoints the
+`-wal` file into the main database and deletes it. A *large orphaned* `-wal` after
+a stop would be the crash signature; its absence is the clean-stop signature.
+
+**Do not read the entity count in the first minute.** HA loads integrations
+progressively — 22 seconds after start it reported 24 entities, and 20 seconds
+later 1264. Poll until the number stops moving.
+
+- [x] **Step 2: Take `home-assistant` out of CI, merge, and push** *(repo)*
+
+The `workflow_dispatch` list becomes `fromJSON('["config"]')`, and the stack's
+paths-filter entry is deleted. The `config` filter keeps its
+`home-assistant/ha-config/**` and `home-assistant/mosquitto/**` lines — those
+paths feed `config-agent`, not the HA containers. (An earlier draft described
+this filter as using `!` exclusions; those were removed on 2026-08-23 because
+a negated pattern under `predicate-quantifier: some` matches every path it
+does not name, so the filter fired on every commit in the repo.)
 
 ```bash
 git add .github/workflows/deploy.yml && git commit -m "stop deploying home-assistant from CI"
@@ -822,13 +843,13 @@ git checkout main && git merge --no-ff komodo-migration -m "take home-assistant 
 git checkout komodo-migration
 ```
 
-- [ ] **Step 3: Record the bind mounts** *(host)*
+- [x] **Step 3: Record the bind mounts** *(host)*
 
 ```bash
 ssh home 'for c in homeassistant mosquitto ollama; do echo "== $c"; docker inspect $c --format "{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}"; done'
 ```
 
-- [ ] **Step 4: Delete the Portainer stack and verify the data root** *(host)*
+- [x] **Step 4: Delete the Portainer stack and verify the data root** *(host)*
 
 ```bash
 ssh home 'du -sh /data/home-assistant/ha-config /data/mosquitto/config; ls /data/home-assistant/ha-config/.storage | head -3'
@@ -836,7 +857,12 @@ ssh home 'du -sh /data/home-assistant/ha-config /data/mosquitto/config; ls /data
 
 Expected: unchanged sizes and a populated `.storage`. **If `.storage` is empty, stop** — that directory holds every entity registration and every credential HA has.
 
-- [ ] **Step 5: Create the Komodo Stack** *(API)*
+- [x] **Step 5: Create the Komodo Stack** *(API)*
+
+Plain config, like `immich` and unlike `monitoring`: no `webhook_force_deploy`,
+no `post_deploy`. `home-assistant/docker-compose.yml` has no `./` mounts — every
+path is `${DATA_ROOT:-/data}/...` — so nothing reaches these containers from the
+checkout but the compose file, which the default "if changed" check already sees.
 
 ```bash
 curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
@@ -860,7 +886,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 }' | python3 -c 'import sys,json;print(json.load(sys.stdin).get("name"))'
 ```
 
-- [ ] **Step 6: Place `.env` and deploy** *(host)*
+- [x] **Step 6: Place `.env` and deploy** *(host)*
 
 `home-assistant/.env` holds only non-secret values (`TZ`, `DATA_ROOT` and friends — check `home-assistant/.env.example`), but compose still needs it for the bind-mount paths to resolve.
 
@@ -873,7 +899,7 @@ curl -s -X POST https://komodo.sussman.win/execute -H "Authorization: Bearer $JW
   -H 'Content-Type: application/json' -d '{"type":"DeployStack","params":{"stack":"home-assistant"}}' >/dev/null
 ```
 
-- [ ] **Step 7: Verify the entities and the voice pipeline**
+- [x] **Step 7: Verify the entities and the voice pipeline**
 
 ```bash
 curl -s -H "Authorization: Bearer $HA_TOKEN" https://home-assistant.sussman.win/api/states \
@@ -883,7 +909,7 @@ ssh home 'docker ps --filter label=com.docker.compose.project=home-assistant --f
 
 Expected: the entity count from Step 1, and the same containers. A fresh HA volume produces a working server with an onboarding screen and zero entities — that is the failure mode this asserts against. Then speak one command through Assist to confirm Whisper → Ollama → Piper still answers.
 
-- [ ] **Step 8: Confirm config-agent still syncs into the moved stack** *(host)*
+- [x] **Step 8: Confirm config-agent still syncs into the moved stack** *(host)*
 
 `config` is still on Portainer; the seam between them is the `/data` directory, which neither control plane moved.
 
@@ -893,11 +919,11 @@ ssh home 'docker logs --tail 20 config-agent'
 
 Expected: its usual sync output with no errors. Then edit a watched file (e.g. `home-assistant/ha-config/scenes.yaml`), push to `main`, and confirm the change reaches `/data/home-assistant/ha-config/scenes.yaml`.
 
-- [ ] **Step 9: Add the GitHub webhook**
+- [x] **Step 9: Add the GitHub webhook**
 
 Payload URL `https://komodo.sussman.win/listener/github/stack/home-assistant/deploy`.
 
-- [ ] **Step 10: Commit the README change** *(repo)*
+- [x] **Step 10: Commit the README change** *(repo)*
 
 ```bash
 git add README.md && git commit -m "note that komodo deploys home assistant now"
