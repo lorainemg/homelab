@@ -650,16 +650,35 @@ Less exposed to the project-name hazard than it looks: its only named volume is 
 - Consumes: the Komodo Stack pattern from Task 4.
 - Produces: a Komodo Stack named `immich` with `project_name: immich`.
 
-- [ ] **Step 1: Capture the baseline**
+- [x] **Step 1: Capture the baseline**
 
 ```bash
 curl -s https://immich.sussman.win/api/server/statistics -H "x-api-key: $IMMICH_API_KEY" \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print("photos",d.get("photos"),"videos",d.get("videos"),"usage",d.get("usage"))'
 ```
 
-Write down the counts. If you have no API key, use the web UI and note the asset count from the library page. This number is the acceptance test in Step 8.
+Write down the counts. If you have no API key, query Postgres directly — a
+stronger assertion anyway, and it needs no key:
 
-- [ ] **Step 2: Fold `deploy.env` into `.env.example`** *(repo)*
+```bash
+ssh home 'docker exec immich_postgres psql -U postgres -d immich -tAc \
+  "select (select count(*) from asset), (select count(*) from album), (select count(*) from \"user\")"'
+ssh home 'docker run --rm -v /data/immich:/d:ro alpine:3 du -sh /d/library /d/postgres'
+```
+
+Note the table is `asset`, singular, in Immich v3. And `du` must run as root —
+as your own user it cannot descend into the postgres directory and silently
+reports `4.0K`.
+
+Measured 2026-08-23, before the cutover:
+
+- **19,731 assets** (19,569 images, 162 videos), 0 albums, 2 users
+- library **64.0 G**, postgres **698 M**
+- bind mounts: `/data/immich/library` -> `/data`,
+  `/data/immich/postgres` -> `/var/lib/postgresql/data`
+- only named volume: `immich_model-cache` (rebuildable ML cache)
+
+- [x] **Step 2: Fold `deploy.env` into `.env.example`** *(repo)*
 
 Compose auto-loads `.env` from the stack directory; the split between committed non-secret values and injected secrets only existed because CI assembled them. Append the contents of `immich/deploy.env` to `immich/.env.example`, add `DB_PASSWORD=changeme` with a comment, then:
 
@@ -669,7 +688,7 @@ git add immich/.env.example
 git commit -m "fold immich's deploy.env into its env example"
 ```
 
-- [ ] **Step 3: Take `immich` out of CI, merge, and push** *(repo)*
+- [x] **Step 3: Take `immich` out of CI, merge, and push** *(repo)*
 
 Same two edits as Task 4 Step 3 — the `workflow_dispatch` list becomes `fromJSON('["config","home-assistant"]')`, and `immich` joins the exclusion applied to the dynamic list. Then merge to `main` and push.
 
@@ -679,7 +698,7 @@ git checkout main && git merge --no-ff komodo-migration -m "take immich off CI" 
 git checkout komodo-migration
 ```
 
-- [ ] **Step 4: Record the bind-mount paths before deleting anything** *(host)*
+- [x] **Step 4: Record the bind-mount paths before deleting anything** *(host)*
 
 ```bash
 ssh home 'docker inspect immich_server --format "{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}"'
@@ -687,7 +706,7 @@ ssh home 'docker inspect immich_server --format "{{range .Mounts}}{{.Source}} ->
 
 Expected to include `/data/immich/library` and, on the postgres container, `/data/immich/postgres`. These are what actually hold the photos.
 
-- [ ] **Step 5: Delete the Portainer stack and verify the data directories are untouched**
+- [x] **Step 5: Delete the Portainer stack and verify the data directories are untouched**
 
 Portainer → Stacks → `immich` → Delete, then:
 
@@ -697,7 +716,13 @@ ssh home 'du -sh /data/immich/library /data/immich/postgres; docker volume ls --
 
 Expected: both directories still hold their previous size, and `immich_model-cache` still listed. **If the library directory is empty or gone, stop.**
 
-- [ ] **Step 6: Create the Komodo Stack** *(API)*
+- [x] **Step 6: Create the Komodo Stack** *(API)*
+
+Unlike `monitoring`, this stack takes the plain config — no `webhook_force_deploy`
+and no `post_deploy`. `immich/docker-compose.yml` has zero `./` mounts, so nothing
+reaches these containers from the checkout except the compose file itself, and
+that file *is* in `file_paths`, which the default "if changed" check reads. There
+is no config to reload and nothing the default check would miss.
 
 ```bash
 curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
@@ -721,7 +746,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 }' | python3 -c 'import sys,json;print(json.load(sys.stdin).get("name"))'
 ```
 
-- [ ] **Step 7: Place `.env` and deploy** *(host)*
+- [x] **Step 7: Place `.env` and deploy** *(host)*
 
 Unlike `monitoring`, do **not** deploy before the `.env` exists — Immich's Postgres would initialise with an empty password and the server would then fail to connect with the real one.
 
@@ -743,7 +768,7 @@ curl -s -X POST https://komodo.sussman.win/execute -H "Authorization: Bearer $JW
   -H 'Content-Type: application/json' -d '{"type":"DeployStack","params":{"stack":"immich"}}' >/dev/null
 ```
 
-- [ ] **Step 8: Verify the library, not the containers**
+- [x] **Step 8: Verify the library, not the containers**
 
 ```bash
 curl -s https://immich.sussman.win/api/server/statistics -H "x-api-key: $IMMICH_API_KEY" \
@@ -752,11 +777,11 @@ curl -s https://immich.sussman.win/api/server/statistics -H "x-api-key: $IMMICH_
 
 Expected: the counts from Step 1. Immich backed by an empty database starts perfectly healthy and shows zero assets — that is the failure this asserts against.
 
-- [ ] **Step 9: Add the GitHub webhook**
+- [x] **Step 9: Add the GitHub webhook**
 
 Payload URL `https://komodo.sussman.win/listener/github/stack/immich/deploy`, same secret and settings as Task 4 Step 12.
 
-- [ ] **Step 10: Commit the README change** *(repo)*
+- [x] **Step 10: Commit the README change** *(repo)*
 
 ```bash
 git add README.md && git commit -m "note that komodo deploys immich now"
