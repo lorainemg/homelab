@@ -650,16 +650,35 @@ Less exposed to the project-name hazard than it looks: its only named volume is 
 - Consumes: the Komodo Stack pattern from Task 4.
 - Produces: a Komodo Stack named `immich` with `project_name: immich`.
 
-- [ ] **Step 1: Capture the baseline**
+- [x] **Step 1: Capture the baseline**
 
 ```bash
 curl -s https://immich.sussman.win/api/server/statistics -H "x-api-key: $IMMICH_API_KEY" \
   | python3 -c 'import sys,json;d=json.load(sys.stdin);print("photos",d.get("photos"),"videos",d.get("videos"),"usage",d.get("usage"))'
 ```
 
-Write down the counts. If you have no API key, use the web UI and note the asset count from the library page. This number is the acceptance test in Step 8.
+Write down the counts. If you have no API key, query Postgres directly — a
+stronger assertion anyway, and it needs no key:
 
-- [ ] **Step 2: Fold `deploy.env` into `.env.example`** *(repo)*
+```bash
+ssh home 'docker exec immich_postgres psql -U postgres -d immich -tAc \
+  "select (select count(*) from asset), (select count(*) from album), (select count(*) from \"user\")"'
+ssh home 'docker run --rm -v /data/immich:/d:ro alpine:3 du -sh /d/library /d/postgres'
+```
+
+Note the table is `asset`, singular, in Immich v3. And `du` must run as root —
+as your own user it cannot descend into the postgres directory and silently
+reports `4.0K`.
+
+Measured 2026-08-23, before the cutover:
+
+- **19,731 assets** (19,569 images, 162 videos), 0 albums, 2 users
+- library **64.0 G**, postgres **698 M**
+- bind mounts: `/data/immich/library` -> `/data`,
+  `/data/immich/postgres` -> `/var/lib/postgresql/data`
+- only named volume: `immich_model-cache` (rebuildable ML cache)
+
+- [x] **Step 2: Fold `deploy.env` into `.env.example`** *(repo)*
 
 Compose auto-loads `.env` from the stack directory; the split between committed non-secret values and injected secrets only existed because CI assembled them. Append the contents of `immich/deploy.env` to `immich/.env.example`, add `DB_PASSWORD=changeme` with a comment, then:
 
@@ -669,7 +688,7 @@ git add immich/.env.example
 git commit -m "fold immich's deploy.env into its env example"
 ```
 
-- [ ] **Step 3: Take `immich` out of CI, merge, and push** *(repo)*
+- [x] **Step 3: Take `immich` out of CI, merge, and push** *(repo)*
 
 Same two edits as Task 4 Step 3 — the `workflow_dispatch` list becomes `fromJSON('["config","home-assistant"]')`, and `immich` joins the exclusion applied to the dynamic list. Then merge to `main` and push.
 
@@ -679,7 +698,7 @@ git checkout main && git merge --no-ff komodo-migration -m "take immich off CI" 
 git checkout komodo-migration
 ```
 
-- [ ] **Step 4: Record the bind-mount paths before deleting anything** *(host)*
+- [x] **Step 4: Record the bind-mount paths before deleting anything** *(host)*
 
 ```bash
 ssh home 'docker inspect immich_server --format "{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}"'
