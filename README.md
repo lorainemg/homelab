@@ -73,8 +73,8 @@ No inbound ports are open on the router: `cloudflared` maintains an
 outbound-only tunnel to Cloudflare, which routes `*.{domain}` hostnames to
 Caddy, which reverse-proxies to each service over a shared Docker bridge
 network (`internal`). TLS terminates at Cloudflare's edge. The tunnel runs
-in the host-managed portainer compose (the control plane CI deploys
-through), so no CI deploy can take it down.
+in its own host-managed compose, separate from every control plane, so no
+deploy — CI's or Komodo's — can take down the route used to repair it.
 
 ## Stacks
 
@@ -85,7 +85,8 @@ through), so no CI deploy can take it down.
 | [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container |
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. The one stack **not** deployed by CI: Komodo pulls it from this repo on a GitHub webhook |
-| [portainer/](portainer/) | Portainer CE + cloudflared | Control plane: management UI/API + the tunnel that exposes everything (host-managed, never CI-deployed) |
+| [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
+| [portainer/](portainer/) | Portainer CE | Outgoing control plane, retained as the rollback target until the migration completes. Host-managed, never CI-deployed |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |
 
 One more stack runs on the server but is deliberately **not** defined here:
@@ -126,7 +127,8 @@ Highlights:
 │   ├── tempo/        Dockerfile, tempo.yml
 │   └── otelcol/      Dockerfile, otel-collector.yml
 ├── registry/         docker-compose.yml (deployed by Komodo, not CI)
-├── portainer/        docker-compose.yml (Portainer + cloudflared), .env.example
+├── tunnel/           docker-compose.yml (cloudflared), .env.example
+├── portainer/        docker-compose.yml (Portainer)
 ├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```
@@ -154,10 +156,10 @@ Conventions:
    `/data`.
 2. Restore the data directories from backup (Immich library + DB, HA config,
    etc.) — or start fresh.
-3. Create the shared network and start the control plane (Portainer + the
-   tunnel): copy `portainer/.env.example` to `portainer/.env`, fill in the
-   tunnel token, then
-   `docker network create internal && docker compose --project-directory portainer up -d`.
+3. Create the shared network, then start the tunnel and the control plane —
+   the tunnel first, since everything else is published through it. Copy
+   `tunnel/.env.example` to `tunnel/.env` and fill in the tunnel token, then
+   `docker network create internal && docker compose --project-directory tunnel up -d && docker compose --project-directory portainer up -d`.
    Point the tunnel's public hostnames — `portainer.<domain>`,
    `immich.<domain>`, `grafana.<domain>`, … — at `http://caddy:80`
    (Portainer needs to be reachable by GitHub Actions).

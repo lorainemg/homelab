@@ -1,16 +1,28 @@
 services:
   prometheus:
-    # Built by CI from ./prometheus (config baked in, HA token injected at
-    # startup from the HA_TOKEN env var — see prometheus/docker-entrypoint.sh).
-    image: ghcr.io/lorainemg/homelab/prometheus:latest
+    # Upstream image; config comes from ./prometheus in the checkout beside
+    # this file, mounted read-only.
+    image: prom/prometheus:latest
     container_name: prometheus
     restart: unless-stopped
+    # docker-entrypoint.sh is a plain 644 file in git, so it is run through sh
+    # rather than executed. (The deleted Dockerfile used COPY --chmod=755.)
+    entrypoint: ["/bin/sh", "/etc/prometheus/docker-entrypoint.sh"]
     ports:
       - "9090:9090"
     environment:
       - HA_TOKEN=${HA_TOKEN:-}
     volumes:
+      - ./prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
+    tmpfs:
+      # The entrypoint writes the HA token here at startup. Deliberately
+      # OUTSIDE the read-only ./prometheus mount: docker cannot create a
+      # mountpoint inside a read-only bind mount, and a placeholder directory
+      # could not be committed anyway because .gitignore has **/secrets/.
+      # tmpfs also suits the data — the token is rewritten from HA_TOKEN on
+      # every start, so it never persists and never touches disk.
+      - /run/prometheus:uid=65534,gid=65534,mode=0700
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -53,11 +65,11 @@ services:
       - internal
 
   promtail:
-    # Built by CI from ./promtail (config baked in).
-    image: ghcr.io/lorainemg/homelab/promtail:latest
+    image: grafana/promtail:latest
     container_name: promtail
     restart: unless-stopped
     volumes:
+      - ./promtail:/etc/promtail:ro
       - /var/log:/var/log:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -66,22 +78,23 @@ services:
       - internal
 
   tempo:
-    # Built by CI from ./tempo (config baked in).
-    image: ghcr.io/lorainemg/homelab/tempo:latest
+    image: grafana/tempo:2.4.2
     container_name: tempo
     restart: unless-stopped
     command: -config.file=/etc/tempo/tempo.yml
     volumes:
+      - ./tempo:/etc/tempo:ro
       - tempo_data:/tmp/tempo
     networks:
       - internal
 
   otel-collector:
-    # Built by CI from ./otelcol (config baked in).
-    image: ghcr.io/lorainemg/homelab/otelcol:latest
+    image: otel/opentelemetry-collector-contrib:latest
     container_name: otel_collector
     restart: unless-stopped
     command: ["--config=/etc/otelcol/otel-collector.yml"]
+    volumes:
+      - ./otelcol:/etc/otelcol:ro
     networks:
       - internal
       # Joins the trakt bot's network so the collector can forward telemetry
