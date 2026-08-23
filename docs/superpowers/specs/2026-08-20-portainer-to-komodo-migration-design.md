@@ -197,6 +197,33 @@ Three details that are not optional:
   `COPY --chmod=755` — which is why the entrypoint invokes it through
   `/bin/sh` rather than executing it directly.
 
+### Making a config edit actually take effect
+
+Bind-mounting config out of the image is only a third of the job. *Verified on
+`monitoring`, 2026-08-23*: "deploy" is three independent things, and two of them
+are off by default.
+
+1. **Something has to notice the commit.** Komodo's webhook runs
+   `DeployStackIfChanged` unless `webhook_force_deploy` is set, and that compares
+   `deployed_contents` against `remote_contents` — the *files named in
+   `file_paths`*, i.e. the compose file alone. A change to `prometheus.yml`
+   updates `latest_hash` and deploys nothing, with no error. Config-mounting
+   stacks therefore need `webhook_force_deploy: true`, at the price of a redeploy
+   on every push to the branch.
+2. **The file has to arrive.** This part is free — the bind mount is live, and
+   Komodo's `git pull` updates the checkout in place.
+3. **The process has to re-read it.** `docker compose up` recreates a container
+   only when its service definition changes, compared via the
+   `com.docker.compose.config-hash` label. A bind-mounted file is not part of that
+   definition, so compose correctly leaves the container running with its old
+   config in memory. A `post_deploy` command restarting the affected services
+   closes the gap, and keeps the whole sequence inside Komodo's own deploy rather
+   than adding a second actor.
+
+Prometheus's `--web.enable-lifecycle` + `POST /-/reload` was considered for (3)
+and rejected: the same flag exposes `/-/quit` on the published port 9090, letting
+anything on the LAN stop monitoring.
+
 ### `config/` — the one surviving build
 
 `config-agent` stays a built image, because it ships a program: alpine, git,

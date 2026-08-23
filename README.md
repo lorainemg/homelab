@@ -83,8 +83,8 @@ deploy — CI's or Komodo's — can take down the route used to repair it.
 | [config/](config/) | Caddy 2.8 + config-agent | Reverse proxy for every published service, plus the one container that flows repo config (HA yaml, mosquitto.conf, Caddyfile) to the live dirs and UI edits back to git |
 | [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML |
 | [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
-| [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container |
-| [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. The one stack **not** deployed by CI: Komodo pulls it from this repo on a GitHub webhook |
+| [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container. Deployed by Komodo from this repo on a GitHub webhook, not by CI; each service's config is bind-mounted from the checkout rather than baked into an image |
+| [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. Deployed by Komodo from this repo on a GitHub webhook, not by CI — the first stack to move |
 | [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
 | [portainer/](portainer/) | Portainer CE | Outgoing control plane, retained as the rollback target until the migration completes. Host-managed, never CI-deployed |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |

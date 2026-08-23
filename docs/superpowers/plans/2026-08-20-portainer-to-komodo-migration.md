@@ -19,6 +19,13 @@
 - **Secrets never in git.** Every `.env` is gitignored by the existing `*/.env` rule; only `.env.example` files are committed. Enable the gitleaks hook once per clone: `cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`.
 - **`komodo/` and `tunnel/` are host-managed** and must not appear in any paths-filter or deploy matrix in `.github/workflows/deploy.yml`, nor as Komodo Stack resources.
 - **Acceptance is a data assertion, never a health check.** A stack backed by an empty volume starts healthy and serves nothing.
+- **A stack that bind-mounts config needs two extra settings**, or config edits
+  silently do nothing — see Task 4 Step 7 for the reasoning. `webhook_force_deploy:
+  true`, because the default "if changed" check only compares the compose file's
+  contents and ignores everything mounted beside it; and a `post_deploy` command
+  restarting the affected services, because `docker compose up` leaves a container
+  alone when its service definition has not changed. Decide both for every stack
+  in Tasks 5-7, not just `monitoring`.
 - **Commit messages:** single line, casual, no trailers — matching the existing log (`add the komodo stack`, `route komodo.sussman.win to komodo`).
 - **Where commands run:** steps marked *(host)* run on the homelab server, reachable as `ssh home` (`/home/lorainemg/homelab` is the server-side clone). Steps marked *(repo)* run in the local clone. Steps marked *(API)* run anywhere and talk to `https://komodo.sussman.win`.
 
@@ -486,7 +493,7 @@ git add .github/workflows/deploy.yml
 git commit -m "stop deploying monitoring from CI"
 ```
 
-- [ ] **Step 4: Merge the branch so far to `main`** *(repo)*
+- [x] **Step 4: Merge the branch so far to `main`** *(repo)*
 
 Komodo deploys from `main`, so the new compose file has to be there before the Stack is created.
 
@@ -498,11 +505,11 @@ git checkout komodo-migration
 
 This push deploys `config`, `immich` and `home-assistant` through Portainer as usual, and does nothing to `monitoring`.
 
-- [ ] **Step 5: Delete the Portainer stack, keeping the volumes**
+- [x] **Step 5: Delete the Portainer stack, keeping the volumes**
 
 In Portainer, Stacks → `monitoring` → Delete. Portainer removes containers and leaves named volumes.
 
-- [ ] **Step 6: Verify the volumes survived — hard gate** *(host)*
+- [x] **Step 6: Verify the volumes survived — hard gate** *(host)*
 
 ```bash
 ssh home 'docker volume ls --format "{{.Name}}" | grep "^monitoring_"'
@@ -510,9 +517,27 @@ ssh home 'docker volume ls --format "{{.Name}}" | grep "^monitoring_"'
 
 Expected: the same four names from Step 2. **If any are missing, stop.** Restore them before continuing; everything after this assumes they exist.
 
-- [ ] **Step 7: Create the Komodo Stack** *(API)*
+- [x] **Step 7: Create the Komodo Stack** *(API)*
 
 `project_name` is set explicitly even though the name alone would produce it. It is the one field whose omission destroys data.
+
+Three other fields are load-bearing, all found the hard way on 2026-08-23:
+
+- **`webhook_force_deploy: true`.** Left `false`, Komodo runs
+  `DeployStackIfChanged`, which compares only the *contents of the files listed
+  in `file_paths`* — the compose file. Editing `prometheus.yml` therefore pulls
+  the commit and deploys nothing, silently. Since the point of Task 3 is that
+  config now lives beside the compose file instead of inside an image, this
+  flag is what makes that workable. Cost: a redeploy on every push to `main`.
+- **`post_deploy`.** Even once a deploy runs, `docker compose up` recreates a
+  container only when its *service definition* changes, and a bind-mounted file
+  is not part of that definition. The new config lands in the checkout while the
+  running process keeps the old one in memory. The post-deploy restart is what
+  makes an edit take effect. Only the four config-carrying services restart;
+  Grafana and Loki are left alone.
+- **`auto_update: false`.** Seven of eight images are `:latest`. Auto-updating
+  would let a breaking upstream image arrive with no commit behind it — and the
+  UI rollback proven in Task 1 pins a *commit*, so it could not undo that.
 
 ```bash
 curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
@@ -528,6 +553,12 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
       "branch": "main",
       "file_paths": ["monitoring/docker-compose.yml"],
       "webhook_enabled": true,
+      "webhook_force_deploy": true,
+      "post_deploy": {
+        "path": "",
+        "command": "docker restart prometheus promtail tempo otel_collector",
+        "shell_mode": false
+      },
       "auto_pull": true,
       "auto_update": false,
       "poll_for_updates": false
@@ -536,7 +567,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 }' | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("name"), d.get("_id",{}).get("$oid",""))'
 ```
 
-- [ ] **Step 8: Place the secrets in Komodo's checkout, then deploy** *(host)*
+- [x] **Step 8: Place the secrets in Komodo's checkout, then deploy** *(host)*
 
 The checkout only exists after Komodo has pulled once, so deploy, place the `.env`, then deploy again. The first deploy brings Grafana up with a default admin password for a few seconds; that is why this stack goes first and Immich does not.
 
@@ -553,7 +584,7 @@ curl -s -X POST https://komodo.sussman.win/execute -H "Authorization: Bearer $JW
 
 If `/home/lorainemg/homelab/monitoring/.env` does not exist on the server, create it from `monitoring/.env.example` with the real values first — they are the same values currently held as the `GRAFANA_ADMIN_PASSWORD` and `HA_TOKEN` GitHub Actions secrets.
 
-- [ ] **Step 9: Verify the data, not the containers**
+- [x] **Step 9: Verify the data, not the containers**
 
 ```bash
 curl -s 'https://grafana.sussman.win/api/search?type=dash-db' | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d),"dashboards")'
@@ -562,7 +593,7 @@ ssh home "curl -sG 'http://localhost:9090/api/v1/query' --data-urlencode 'query=
 
 Expected: the same dashboard count and title list from Step 1, and a non-empty query result. An empty dashboard list means Grafana came up on a fresh volume — go to Rollback.
 
-- [ ] **Step 10: Verify Prometheus is reading the mounted config and its token**
+- [x] **Step 10: Verify Prometheus is reading the mounted config and its token**
 
 ```bash
 ssh home 'docker exec prometheus cat /run/prometheus/ha_token | wc -c; docker exec prometheus ls -l /etc/prometheus/prometheus.yml'
@@ -571,7 +602,7 @@ ssh home "curl -sG 'http://localhost:9090/api/v1/query' --data-urlencode 'query=
 
 Expected: a non-zero byte count for the token, `prometheus.yml` present, and the Home Assistant scrape target reporting. A zero-byte token means `HA_TOKEN` is missing from `monitoring/.env` on the host; a *missing* file means the `/run/prometheus` tmpfs is missing from the compose file.
 
-- [ ] **Step 11: Verify a config edit reaches the container without a build**
+- [x] **Step 11: Verify a config edit reaches the container without a build**
 
 The point of the whole exercise. Change something harmless and observable in `monitoring/prometheus/prometheus.yml` — e.g. `scrape_interval` — commit, push to `main`, and wait for the webhook.
 
@@ -581,7 +612,7 @@ ssh home 'docker exec prometheus grep scrape_interval /etc/prometheus/prometheus
 
 Expected: the new value, with no GitHub Actions run having occurred. Revert the change and push again once confirmed.
 
-- [ ] **Step 12: Add the GitHub webhook**
+- [x] **Step 12: Add the GitHub webhook**
 
 Repo Settings → Webhooks → Add webhook.
 
@@ -594,7 +625,7 @@ Repo Settings → Webhooks → Add webhook.
 
 If Step 11 already deployed without this, the listener was reached some other way — check before assuming it works.
 
-- [ ] **Step 13: Commit the README change** *(repo)*
+- [x] **Step 13: Commit the README change** *(repo)*
 
 Amend the `monitoring/` row's "Why" in the README stack table to note it is deployed by Komodo from this repo on a webhook, not by CI.
 
