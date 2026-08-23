@@ -486,7 +486,7 @@ git add .github/workflows/deploy.yml
 git commit -m "stop deploying monitoring from CI"
 ```
 
-- [ ] **Step 4: Merge the branch so far to `main`** *(repo)*
+- [x] **Step 4: Merge the branch so far to `main`** *(repo)*
 
 Komodo deploys from `main`, so the new compose file has to be there before the Stack is created.
 
@@ -498,11 +498,11 @@ git checkout komodo-migration
 
 This push deploys `config`, `immich` and `home-assistant` through Portainer as usual, and does nothing to `monitoring`.
 
-- [ ] **Step 5: Delete the Portainer stack, keeping the volumes**
+- [x] **Step 5: Delete the Portainer stack, keeping the volumes**
 
 In Portainer, Stacks → `monitoring` → Delete. Portainer removes containers and leaves named volumes.
 
-- [ ] **Step 6: Verify the volumes survived — hard gate** *(host)*
+- [x] **Step 6: Verify the volumes survived — hard gate** *(host)*
 
 ```bash
 ssh home 'docker volume ls --format "{{.Name}}" | grep "^monitoring_"'
@@ -510,7 +510,7 @@ ssh home 'docker volume ls --format "{{.Name}}" | grep "^monitoring_"'
 
 Expected: the same four names from Step 2. **If any are missing, stop.** Restore them before continuing; everything after this assumes they exist.
 
-- [ ] **Step 7: Create the Komodo Stack** *(API)*
+- [x] **Step 7: Create the Komodo Stack** *(API)*
 
 `project_name` is set explicitly even though the name alone would produce it. It is the one field whose omission destroys data.
 
@@ -536,7 +536,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 }' | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("name"), d.get("_id",{}).get("$oid",""))'
 ```
 
-- [ ] **Step 8: Place the secrets in Komodo's checkout, then deploy** *(host)*
+- [x] **Step 8: Place the secrets in Komodo's checkout, then deploy** *(host)*
 
 The checkout only exists after Komodo has pulled once, so deploy, place the `.env`, then deploy again. The first deploy brings Grafana up with a default admin password for a few seconds; that is why this stack goes first and Immich does not.
 
@@ -553,7 +553,7 @@ curl -s -X POST https://komodo.sussman.win/execute -H "Authorization: Bearer $JW
 
 If `/home/lorainemg/homelab/monitoring/.env` does not exist on the server, create it from `monitoring/.env.example` with the real values first — they are the same values currently held as the `GRAFANA_ADMIN_PASSWORD` and `HA_TOKEN` GitHub Actions secrets.
 
-- [ ] **Step 9: Verify the data, not the containers**
+- [x] **Step 9: Verify the data, not the containers**
 
 ```bash
 curl -s 'https://grafana.sussman.win/api/search?type=dash-db' | python3 -c 'import sys,json;d=json.load(sys.stdin);print(len(d),"dashboards")'
@@ -562,7 +562,7 @@ ssh home "curl -sG 'http://localhost:9090/api/v1/query' --data-urlencode 'query=
 
 Expected: the same dashboard count and title list from Step 1, and a non-empty query result. An empty dashboard list means Grafana came up on a fresh volume — go to Rollback.
 
-- [ ] **Step 10: Verify Prometheus is reading the mounted config and its token**
+- [x] **Step 10: Verify Prometheus is reading the mounted config and its token**
 
 ```bash
 ssh home 'docker exec prometheus cat /run/prometheus/ha_token | wc -c; docker exec prometheus ls -l /etc/prometheus/prometheus.yml'
