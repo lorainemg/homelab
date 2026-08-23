@@ -188,10 +188,14 @@ CLOUDFLARE_TUNNEL_TOKEN=changeme
 
 The old `cloudflared` is still running at this point. Compose refuses to start a second container named `cloudflared`, so this step brings the new project up only after stopping the old container — a brief tunnel outage, which is why it happens before anything else has moved.
 
+**Steps 1–2 must be committed and pushed before this runs** — the host checks
+out `komodo-migration`, so `tunnel/` has to exist on the remote branch first.
+Step 8's commit therefore covers only the repo edits in Steps 5–7.
+
 ```bash
 ssh home
 cd /home/lorainemg/homelab
-git fetch origin && git checkout komodo-migration
+git fetch origin && git checkout komodo-migration && git pull --ff-only
 grep '^CLOUDFLARE_TUNNEL_TOKEN=' portainer/.env > tunnel/.env
 docker stop cloudflared && docker rm cloudflared
 docker compose --project-directory tunnel up -d
