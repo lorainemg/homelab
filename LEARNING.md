@@ -56,6 +56,23 @@ start of a session; update when a concept lands or a new gap appears.
   that *announces* it is set is a real tiebreaker, and here it lost to the
   option that actually works — so unpinning has to be part of the procedure
   rather than a tidy-up. (2026-08-23)
+- **`!pattern` in dorny/paths-filter is not an exclusion** — the action defaults
+  to `predicate-quantifier: some`, so a filter fires if *any* pattern matches,
+  and a negated pattern matches every path it does not name. The
+  `home-assistant` filter's `'!home-assistant/ha-config/**'` was therefore true
+  for every commit in the repo, and every push to `main` ever made redeployed
+  Home Assistant. `predicate-quantifier: every` would fix the negation but break
+  the alternation the other filters need, so the exclusion was rewritten as a
+  positive single-level glob (`home-assistant/*`). Fixed in `7da4b0f` on `main`.
+  Reproduced with picomatch before and after, against the real CI outcome.
+  (2026-08-23)
+- **A deploy that restarts the proxy cannot report its own success** — the
+  `config` stack contains Caddy, and CI reaches Portainer *through* Caddy. So
+  redeploying `config` severs the connection the success response was travelling
+  on, and the job reports a Cloudflare 502 having actually deployed fine. For
+  this one stack a red CI run is not evidence; check the containers. Same shape
+  as the tunnel rule above, applied to the reporting path instead of the
+  recovery path. (2026-08-23)
 
 ## Shaky
 
