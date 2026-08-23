@@ -63,6 +63,11 @@ services:
   # ------------------------
   # Ollama (local LLM)
   # ------------------------
+  # Models are not pulled automatically. On a fresh server, after this stack is
+  # up:  docker exec ollama ollama pull llama3.2:3b
+  # (A one-shot ollama-pull service used to do this; it was removed on
+  # 2026-08-23 because it exits after pulling, which permanently marks the
+  # whole stack unhealthy in Komodo.)
   ollama:
     image: ollama/ollama
     container_name: ollama
@@ -80,20 +85,6 @@ services:
   # ------------------------
   # Ollama model pull (runs once)
   # ------------------------
-  ollama-pull:
-    image: ollama/ollama
-    container_name: ollama-pull
-    networks:
-      - internal
-    volumes:
-      - ${DATA_ROOT:-/data}/ollama:/root/.ollama
-    environment:
-      - OLLAMA_HOST=ollama
-    depends_on:
-      ollama:
-        condition: service_healthy
-    entrypoint: ["ollama", "pull", "llama3.2:3b"]
-    restart: "no"
 
 networks:
   internal:
