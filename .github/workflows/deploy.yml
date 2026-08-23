@@ -40,10 +40,17 @@ jobs:
             immich:
               - 'immich/**'
               - '.github/workflows/deploy.yml'
+            # Only the top-level compose/env belong to this stack; ha-config
+            # and mosquitto belong to config, above. This is a single-level
+            # glob rather than 'home-assistant/**' plus '!...' exclusions
+            # because paths-filter runs with predicate-quantifier 'some': a
+            # filter fires if ANY pattern matches, and a negated pattern
+            # matches every path it does not name, so '!home-assistant/
+            # ha-config/**' was true for every commit in the repo and this
+            # stack redeployed on all of them. Note '*' does not descend — a
+            # new subdirectory belonging to this stack must be added here.
             home-assistant:
-              - 'home-assistant/**'
-              - '!home-assistant/ha-config/**'
-              - '!home-assistant/mosquitto/**'
+              - 'home-assistant/*'
               - '.github/workflows/deploy.yml'
 
   deploy:
