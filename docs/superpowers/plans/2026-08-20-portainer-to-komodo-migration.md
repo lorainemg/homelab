@@ -146,7 +146,7 @@ Done before any stack migrates, so every later task has an intact way back in. T
 - Consumes: `CLOUDFLARE_TUNNEL_TOKEN`, currently in `portainer/.env`.
 - Produces: a `tunnel` compose project running one container named `cloudflared`, on the default bridge (it needs no shared network — it dials out and reaches Caddy by hostname over `internal`).
 
-- [ ] **Step 1: Create `tunnel/docker-compose.yml`** *(repo)*
+- [x] **Step 1: Create `tunnel/docker-compose.yml`** *(repo)*
 
 The service is copied verbatim from `portainer/docker-compose.yml`, including its network membership, so nothing about how it reaches Caddy changes.
 
@@ -174,7 +174,7 @@ networks:
     external: true # shared with the other stacks; created by scripts/bootstrap.sh
 ```
 
-- [ ] **Step 2: Create `tunnel/.env.example`** *(repo)*
+- [x] **Step 2: Create `tunnel/.env.example`** *(repo)*
 
 ```bash
 # Cloudflare Tunnel configuration.
@@ -184,7 +184,7 @@ networks:
 CLOUDFLARE_TUNNEL_TOKEN=changeme
 ```
 
-- [ ] **Step 3: Put the token on the host and start the new stack** *(host)*
+- [x] **Step 3: Put the token on the host and start the new stack** *(host)*
 
 The old `cloudflared` is still running at this point. Compose refuses to start a second container named `cloudflared`, so this step brings the new project up only after stopping the old container — a brief tunnel outage, which is why it happens before anything else has moved.
 
@@ -204,7 +204,7 @@ docker ps --filter name=cloudflared --format '{{.Names}}\t{{.Status}}'
 
 Expected: one `cloudflared`, `Up`.
 
-- [ ] **Step 4: Verify every published hostname still answers**
+- [x] **Step 4: Verify every published hostname still answers**
 
 ```bash
 for h in portainer komodo grafana immich registry; do
@@ -217,11 +217,11 @@ Expected: no `530` and no `000`. A `530` is Cloudflare saying the tunnel has no 
 
 **If this fails:** `docker compose --project-directory tunnel down` and restore `cloudflared` by running `docker compose --project-directory portainer up -d` from the pre-change checkout. The token is unchanged, so the old container reconnects.
 
-- [ ] **Step 5: Remove `cloudflared` from the Portainer stack** *(repo)*
+- [x] **Step 5: Remove `cloudflared` from the Portainer stack** *(repo)*
 
 Delete the `cloudflared` service block and its leading comment from `portainer/docker-compose.yml`, leaving the `portainer` service, the `portainer_data` volume and the `networks:` block untouched. Delete the `CLOUDFLARE_TUNNEL_TOKEN` line from `portainer/.env.example`.
 
-- [ ] **Step 6: Swap `portainer` for `tunnel` in the bootstrap order** *(repo)*
+- [x] **Step 6: Swap `portainer` for `tunnel` in the bootstrap order** *(repo)*
 
 In `scripts/bootstrap.sh`, change the STACKS line and its comment:
 
@@ -233,7 +233,7 @@ STACKS=(tunnel portainer registry config immich home-assistant monitoring)
 
 `portainer` stays in the list until Task 8 retires it.
 
-- [ ] **Step 7: Update the README** *(repo)*
+- [x] **Step 7: Update the README** *(repo)*
 
 In the stack table, add a `tunnel/` row and amend the `portainer/` row so it no longer claims to hold the tunnel:
 
@@ -244,7 +244,7 @@ In the stack table, add a `tunnel/` row and amend the `portainer/` row so it no 
 
 Add `├── tunnel/          docker-compose.yml (cloudflared), .env.example` to the repo layout block, and change rebuild step 3 to bring up `tunnel` before `portainer`.
 
-- [ ] **Step 8: Commit** *(repo)*
+- [x] **Step 8: Commit** *(repo)*
 
 ```bash
 git add tunnel/ portainer/ scripts/bootstrap.sh README.md
