@@ -34,9 +34,6 @@ jobs:
               - 'home-assistant/ha-config/**'
               - 'home-assistant/mosquitto/**'
               - '.github/workflows/deploy.yml'
-            monitoring:
-              - 'monitoring/**'
-              - '.github/workflows/deploy.yml'
             immich:
               - 'immich/**'
               - '.github/workflows/deploy.yml'
@@ -60,9 +57,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # registry is deliberately absent: the docker-registry stack is
+        # registry and monitoring are deliberately absent: those stacks are
         # deployed by Komodo straight from this repo, not through Portainer.
-        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config","monitoring","immich","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
+        # Two control planes owning one compose project would fight over it.
+        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config","immich","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
     env:
       IMAGE_BASE: ghcr.io/${{ github.repository }}
     steps:

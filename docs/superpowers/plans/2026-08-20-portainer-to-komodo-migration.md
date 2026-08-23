@@ -444,7 +444,7 @@ The first real cutover, and the one that exercises every new mechanism at once. 
 - Consumes: the compose file from Task 3.
 - Produces: a Komodo Stack named `monitoring` with `project_name: monitoring`, deploying `monitoring/docker-compose.yml` from `main`.
 
-- [ ] **Step 1: Capture the baseline that Step 9 checks against**
+- [x] **Step 1: Capture the baseline that Step 9 checks against**
 
 Before anything is deleted. This is the data assertion — a container health check would pass against an empty volume.
 
@@ -453,9 +453,18 @@ curl -s 'https://grafana.sussman.win/api/search?type=dash-db' | python3 -c 'impo
 ssh home "curl -sG 'http://localhost:9090/api/v1/query' --data-urlencode 'query=count(up)'" | python3 -c 'import sys,json;print("series:",json.load(sys.stdin)["data"]["result"])'
 ```
 
-Write both down. If Grafana's API requires auth, use `-u admin:$GRAFANA_ADMIN_PASSWORD`.
+Write both down. If Grafana's API requires auth, use `-u admin:$GRAFANA_ADMIN_PASSWORD`
+(the live value is readable from the running container's env).
 
-- [ ] **Step 2: List the volumes that must survive** *(host)*
+Measured 2026-08-23, before the cutover:
+
+- **5 dashboards** — Apps Logs, Container Dashboard, Home Assistant, Host Data,
+  Immich Overview
+- **`count(up)` = 5** — five scrape targets answering
+- volumes: `monitoring_grafana_data`, `monitoring_loki_data`,
+  `monitoring_prometheus_data`, `monitoring_tempo_data`
+
+- [x] **Step 2: List the volumes that must survive** *(host)*
 
 ```bash
 ssh home 'docker volume ls --format "{{.Name}}" | grep "^monitoring_"'
@@ -463,7 +472,7 @@ ssh home 'docker volume ls --format "{{.Name}}" | grep "^monitoring_"'
 
 Expected exactly: `monitoring_grafana_data`, `monitoring_loki_data`, `monitoring_prometheus_data`, `monitoring_tempo_data`.
 
-- [ ] **Step 3: Take `monitoring` out of CI** *(repo)*
+- [x] **Step 3: Take `monitoring` out of CI** *(repo)*
 
 Done *before* the stack moves, so a later push cannot recreate it in Portainer alongside Komodo's copy — two control planes fighting over one compose project.
 
