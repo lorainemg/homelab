@@ -267,15 +267,14 @@ Repo-only. Nothing deploys here — this task produces a compose file that resol
 - Consumes: Komodo's on-host checkout at `/etc/komodo/stacks/monitoring/`, created in Task 4.
 - Produces: a `monitoring` compose project whose four config-carrying services run upstream images with `./<service>` bind-mounted, and which reads `GRAFANA_ADMIN_PASSWORD` and `HA_TOKEN` from `monitoring/.env`.
 
-- [ ] **Step 1: Rewrite the four services to mount their config** *(repo)*
+- [x] **Step 1: Rewrite the four services to mount their config** *(repo)*
 
 In `monitoring/docker-compose.yml`, replace the `prometheus`, `promtail`, `tempo` and `otel-collector` service definitions with these. Everything else in the file — `node-exporter`, `grafana`, `loki`, `cadvisor`, the `networks:` block, the `volumes:` block — is unchanged except for one addition in Step 2.
 
 ```yaml
   prometheus:
     # Upstream image; config comes from ./prometheus in the checkout beside
-    # this file. The named volume shadows secrets/ so the entrypoint's token
-    # write lands in docker storage instead of dirtying the git checkout.
+    # this file, mounted read-only.
     image: prom/prometheus:latest
     container_name: prometheus
     restart: unless-stopped
@@ -286,8 +285,15 @@ In `monitoring/docker-compose.yml`, replace the `prometheus`, `promtail`, `tempo
       - HA_TOKEN=${HA_TOKEN:-}
     volumes:
       - ./prometheus:/etc/prometheus:ro
-      - prometheus_secrets:/etc/prometheus/secrets
       - prometheus_data:/prometheus
+    tmpfs:
+      # The entrypoint writes the HA token here at startup. Deliberately
+      # OUTSIDE the read-only ./prometheus mount: docker cannot create a
+      # mountpoint inside a read-only bind mount, and a placeholder directory
+      # could not be committed anyway because .gitignore has **/secrets/.
+      # tmpfs also suits the data — the token is rewritten from HA_TOKEN on
+      # every start, so it never persists and never touches disk.
+      - /run/prometheus:uid=65534,gid=65534,mode=0700
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -339,37 +345,50 @@ In `monitoring/docker-compose.yml`, replace the `prometheus`, `promtail`, `tempo
       - trakt-tg-bot_aspire
 ```
 
-- [ ] **Step 2: Add the `prometheus_secrets` volume** *(repo)*
+- [x] **Step 2: Leave the `volumes:` block alone** *(repo)*
 
 In the `volumes:` block at the bottom of `monitoring/docker-compose.yml`:
 
 ```yaml
 volumes:
   prometheus_data:
-  prometheus_secrets:
   grafana_data:
   loki_data:
   tempo_data:
 ```
 
-- [ ] **Step 3: Create the secrets mountpoint in the repo** *(repo)*
+Unchanged from before, in other words — an earlier draft of this step added a
+`prometheus_secrets` volume, which does not work. See Step 1.
 
-Docker cannot create a mountpoint inside a read-only bind mount, so this directory must exist in the checkout or Prometheus will not start.
+- [x] **Step 3: Point the token path outside the config mount** *(repo)*
 
-```bash
-mkdir -p monitoring/prometheus/secrets
-printf '# The prometheus entrypoint writes ha_token here at startup.\n# A named volume shadows this directory at runtime; it must exist so\n# docker has a mountpoint inside the read-only config mount.\n' \
-  > monitoring/prometheus/secrets/.gitkeep
+The token cannot live under `/etc/prometheus`. Docker cannot create a
+mountpoint inside a read-only bind mount, and the placeholder directory that
+would work around that cannot be committed — `.gitignore` carries a blanket
+`**/secrets/`. So the tmpfs goes at `/run/prometheus` instead, and the two
+files that name the path follow it.
+
+In `monitoring/prometheus/docker-entrypoint.sh`:
+
+```sh
+printf '%s' "${HA_TOKEN:-}" > /run/prometheus/ha_token
 ```
 
-- [ ] **Step 4: Delete the four Dockerfiles** *(repo)*
+In `monitoring/prometheus/prometheus.yml`, under the `home-assistant` job:
+
+```yaml
+    authorization:
+      credentials_file: /run/prometheus/ha_token
+```
+
+- [x] **Step 4: Delete the four Dockerfiles** *(repo)*
 
 ```bash
 git rm monitoring/prometheus/Dockerfile monitoring/promtail/Dockerfile \
        monitoring/tempo/Dockerfile monitoring/otelcol/Dockerfile
 ```
 
-- [ ] **Step 5: Create `monitoring/.env.example`** *(repo)*
+- [x] **Step 5: Create `monitoring/.env.example`** *(repo)*
 
 ```bash
 # Monitoring stack configuration.
@@ -383,7 +402,7 @@ GRAFANA_ADMIN_PASSWORD=changeme
 HA_TOKEN=changeme
 ```
 
-- [ ] **Step 6: Verify the compose file resolves both ways** *(repo)*
+- [x] **Step 6: Verify the compose file resolves both ways** *(repo)*
 
 The two invocations are Komodo's and `bootstrap.sh`'s. They must agree.
 
@@ -395,7 +414,7 @@ docker compose --project-directory monitoring config | grep -A2 'source:.*monito
 
 Expected: both print the same absolute paths, ending `/monitoring/prometheus`, `/monitoring/promtail`, `/monitoring/tempo`, `/monitoring/otelcol`. Any `${...}` left unresolved, or a path under `/tmp`, means the file is wrong.
 
-- [ ] **Step 7: Verify no image reference survives** *(repo)*
+- [x] **Step 7: Verify no image reference survives** *(repo)*
 
 ```bash
 grep -n 'ghcr.io/lorainemg/homelab' monitoring/docker-compose.yml
@@ -403,7 +422,7 @@ grep -n 'ghcr.io/lorainemg/homelab' monitoring/docker-compose.yml
 
 Expected: no output. Any hit means a service still points at a deleted build.
 
-- [ ] **Step 8: Commit** *(repo)*
+- [x] **Step 8: Commit** *(repo)*
 
 ```bash
 git add monitoring/ && git rm --cached monitoring/.env 2>/dev/null; \
@@ -537,11 +556,11 @@ Expected: the same dashboard count and title list from Step 1, and a non-empty q
 - [ ] **Step 10: Verify Prometheus is reading the mounted config and its token**
 
 ```bash
-ssh home 'docker exec prometheus cat /etc/prometheus/secrets/ha_token | wc -c; docker exec prometheus ls -l /etc/prometheus/prometheus.yml'
+ssh home 'docker exec prometheus cat /run/prometheus/ha_token | wc -c; docker exec prometheus ls -l /etc/prometheus/prometheus.yml'
 ssh home "curl -sG 'http://localhost:9090/api/v1/query' --data-urlencode 'query=up{job=~\".*home.*\"}'" | head -c 300
 ```
 
-Expected: a non-zero byte count for the token, `prometheus.yml` present, and the Home Assistant scrape target reporting. A zero-byte token means the `prometheus_secrets` volume is missing from the compose file.
+Expected: a non-zero byte count for the token, `prometheus.yml` present, and the Home Assistant scrape target reporting. A zero-byte token means `HA_TOKEN` is missing from `monitoring/.env` on the host; a *missing* file means the `/run/prometheus` tmpfs is missing from the compose file.
 
 - [ ] **Step 11: Verify a config edit reaches the container without a build**
 

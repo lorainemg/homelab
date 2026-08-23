@@ -173,17 +173,26 @@ image: prom/prometheus:latest
 entrypoint: ["/bin/sh", "/etc/prometheus/docker-entrypoint.sh"]
 volumes:
   - ./prometheus:/etc/prometheus:ro
-  - prometheus_secrets:/etc/prometheus/secrets
+tmpfs:
+  - /run/prometheus:uid=65534,gid=65534,mode=0700
 ```
 
-Two details that are not optional:
+Three details that are not optional:
 
-- The named volume shadows one subdirectory of the read-only mount so the
-  entrypoint's token write lands in Docker's storage instead of dirtying the
-  checkout, where the next `git pull --force` would fight it.
-- *Verified*: Docker **cannot** create a mountpoint inside a read-only bind
-  mount. `monitoring/prometheus/secrets/` must therefore exist in the repo (a
-  `.gitkeep`) or the container fails to start.
+- The token is written to a tmpfs so it never dirties the checkout, where the
+  next `git pull --force` would fight it. tmpfs rather than a named volume
+  because the entrypoint runs as `nobody` (uid 65534) and *a fresh named
+  volume comes up empty and root-owned* — the write fails with `EACCES`. The
+  data suits tmpfs anyway: `HA_TOKEN` is rewritten on every start, so the
+  token never needs to persist and never reaches disk. All verified against
+  `prom/prometheus:latest`.
+- The tmpfs is mounted **outside** `/etc/prometheus`, not inside it. Docker
+  cannot create a mountpoint inside a read-only bind mount (*verified*: the
+  container dies with `Read-only file system`), and the placeholder directory
+  that would fix it cannot be committed — `.gitignore` carries a blanket
+  `**/secrets/`. Putting the tmpfs at `/run/prometheus` removes the problem
+  rather than working around it. `prometheus.yml`'s `credentials_file` and
+  `docker-entrypoint.sh` both point there.
 - `docker-entrypoint.sh` is mode `644` in git — the deleted Dockerfile used
   `COPY --chmod=755` — which is why the entrypoint invokes it through
   `/bin/sh` rather than executing it directly.
