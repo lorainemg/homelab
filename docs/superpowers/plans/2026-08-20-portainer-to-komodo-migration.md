@@ -19,6 +19,13 @@
 - **Secrets never in git.** Every `.env` is gitignored by the existing `*/.env` rule; only `.env.example` files are committed. Enable the gitleaks hook once per clone: `cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`.
 - **`komodo/` and `tunnel/` are host-managed** and must not appear in any paths-filter or deploy matrix in `.github/workflows/deploy.yml`, nor as Komodo Stack resources.
 - **Acceptance is a data assertion, never a health check.** A stack backed by an empty volume starts healthy and serves nothing.
+- **A stack that bind-mounts config needs two extra settings**, or config edits
+  silently do nothing — see Task 4 Step 7 for the reasoning. `webhook_force_deploy:
+  true`, because the default "if changed" check only compares the compose file's
+  contents and ignores everything mounted beside it; and a `post_deploy` command
+  restarting the affected services, because `docker compose up` leaves a container
+  alone when its service definition has not changed. Decide both for every stack
+  in Tasks 5-7, not just `monitoring`.
 - **Commit messages:** single line, casual, no trailers — matching the existing log (`add the komodo stack`, `route komodo.sussman.win to komodo`).
 - **Where commands run:** steps marked *(host)* run on the homelab server, reachable as `ssh home` (`/home/lorainemg/homelab` is the server-side clone). Steps marked *(repo)* run in the local clone. Steps marked *(API)* run anywhere and talk to `https://komodo.sussman.win`.
 
@@ -514,6 +521,24 @@ Expected: the same four names from Step 2. **If any are missing, stop.** Restore
 
 `project_name` is set explicitly even though the name alone would produce it. It is the one field whose omission destroys data.
 
+Three other fields are load-bearing, all found the hard way on 2026-08-23:
+
+- **`webhook_force_deploy: true`.** Left `false`, Komodo runs
+  `DeployStackIfChanged`, which compares only the *contents of the files listed
+  in `file_paths`* — the compose file. Editing `prometheus.yml` therefore pulls
+  the commit and deploys nothing, silently. Since the point of Task 3 is that
+  config now lives beside the compose file instead of inside an image, this
+  flag is what makes that workable. Cost: a redeploy on every push to `main`.
+- **`post_deploy`.** Even once a deploy runs, `docker compose up` recreates a
+  container only when its *service definition* changes, and a bind-mounted file
+  is not part of that definition. The new config lands in the checkout while the
+  running process keeps the old one in memory. The post-deploy restart is what
+  makes an edit take effect. Only the four config-carrying services restart;
+  Grafana and Loki are left alone.
+- **`auto_update: false`.** Seven of eight images are `:latest`. Auto-updating
+  would let a breaking upstream image arrive with no commit behind it — and the
+  UI rollback proven in Task 1 pins a *commit*, so it could not undo that.
+
 ```bash
 curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
   -H 'Content-Type: application/json' -d '{
@@ -528,6 +553,12 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
       "branch": "main",
       "file_paths": ["monitoring/docker-compose.yml"],
       "webhook_enabled": true,
+      "webhook_force_deploy": true,
+      "post_deploy": {
+        "path": "",
+        "command": "docker restart prometheus promtail tempo otel_collector",
+        "shell_mode": false
+      },
       "auto_pull": true,
       "auto_update": false,
       "poll_for_updates": false
