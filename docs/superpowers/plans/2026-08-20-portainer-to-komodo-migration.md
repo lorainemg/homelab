@@ -58,11 +58,30 @@ curl -s -X POST https://komodo.sussman.win/read -H "Authorization: Bearer $JWT" 
   | python3 -c 'import sys,json;[print(s["name"], s["info"]["deployed_hash"], s["info"]["latest_hash"]) for s in json.load(sys.stdin)]'
 ```
 
-Write down the `deployed_hash`. That is what you are rolling back *to* at the end.
+Write down **both** hashes. `deployed_hash` is where the Stack is now;
+`latest_hash` is `main`'s current tip. They are allowed to differ — the webhook
+is file-scoped (`webhook_force_deploy: false`), so commits that do not touch
+`registry/` never trigger a redeploy. Step 5 rolls *forward to `latest_hash`*,
+which is not necessarily the `deployed_hash` you just recorded.
 
 - [ ] **Step 2: Pin the Stack to an older commit and redeploy from the UI**
 
-In Komodo's UI, open the `docker-registry` Stack → Config, set **branch** to a specific older commit hash (Komodo accepts a commit in the branch field), save, and hit Deploy. Start a timer when you click Deploy.
+In Komodo's UI, open the `docker-registry` Stack → Config, leave **branch** as
+`main`, and set the **commit** field to an older commit hash that touched
+`registry/`. Save, and hit Deploy. Start a timer when you click Deploy.
+
+**Use the `commit` field, not the `branch` field.** Komodo interpolates `branch`
+straight into `git clone <url> <path> -b <branch>`, and git's `-b` accepts only
+branch names and tags, never a bare commit — so a hash there fails the clone
+outright (`fatal: Remote branch <hash> not found in upstream origin`). On the
+pull path, taken whenever the on-host checkout already exists, it fails *later*
+and more quietly: `git checkout -f <hash>` succeeds, then
+`git pull --rebase --force origin <hash>` dies with `couldn't find remote ref`,
+so the UI shows the commit you asked for and nothing is deployed. The `commit`
+field is interpolated into `git reset --hard <commit>` after a successful clone
+or pull, which is the mechanism that actually works. Verified against
+`lib/git/src/clone.rs` and `lib/git/src/pull.rs` at komodo `v2.3.1`, and
+against a real repo — an earlier draft of this plan asserted the opposite.
 
 The criterion from the evaluation spec is *under a minute, with no git revert and no CI run*.
 
@@ -87,7 +106,15 @@ Expected: a non-empty `repositories` list. A rollback that empties the volume is
 
 - [ ] **Step 5: Roll forward again**
 
-Set **branch** back to `main` in the UI, Deploy, and confirm `deployed_hash` returns to the value from Step 1 via the command in Step 3.
+Clear the **commit** field in the UI, leaving **branch** as `main`, Deploy, and
+confirm via the command in Step 3 that `deployed_hash` is now `main`'s tip —
+the `latest_hash` recorded in Step 1, which may be *newer* than the
+`deployed_hash` recorded there.
+
+**Do not treat this as tidy-up.** A pin left in the `commit` field is invisible
+at a glance: the Stack still reports `branch: main`, webhooks still fire, and
+every deploy still reports success — while the stack stays frozen on the pinned
+commit indefinitely. Unpinning is the second half of the rollback procedure.
 
 - [ ] **Step 6: Write the result into the evaluation plan** *(repo)*
 

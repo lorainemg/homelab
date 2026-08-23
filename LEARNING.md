@@ -41,6 +41,21 @@ start of a session; update when a concept lands or a new gap appears.
   way in, and the control plane's UI is behind it. Anything deployed
   automatically can be broken by a deploy, so the tunnel lives where no deploy
   can reach it. (2026-08-20)
+- **Komodo's `branch` and `commit` fields are two different git commands** —
+  `branch` is interpolated into `git clone <url> <path> -b <branch>`, and git's
+  `-b` takes only branch names and tags, so a bare hash there fails the clone;
+  on the pull path it fails one step later, after `git checkout -f <hash>` has
+  already succeeded, which looks like it worked. `commit` is interpolated into
+  `git reset --hard <commit>` after the clone or pull, so *that* is the field a
+  rollback pins. Read from `lib/git/src/clone.rs` and `pull.rs` and reproduced
+  against a real repo — the migration plan had asserted the opposite.
+  (2026-08-23)
+- **The quiet wrong state is the dangerous one** — a rollback pinned in the
+  `commit` field leaves `branch: main` on display, webhooks still firing and
+  deploys still green, while the stack is frozen forever. Preferring the option
+  that *announces* it is set is a real tiebreaker, and here it lost to the
+  option that actually works — so unpinning has to be part of the procedure
+  rather than a tidy-up. (2026-08-23)
 
 ## Shaky
 
