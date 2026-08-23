@@ -34,9 +34,6 @@ jobs:
               - 'home-assistant/ha-config/**'
               - 'home-assistant/mosquitto/**'
               - '.github/workflows/deploy.yml'
-            immich:
-              - 'immich/**'
-              - '.github/workflows/deploy.yml'
             # Only the top-level compose/env belong to this stack; ha-config
             # and mosquitto belong to config, above. This is a single-level
             # glob rather than 'home-assistant/**' plus '!...' exclusions
@@ -57,10 +54,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # registry and monitoring are deliberately absent: those stacks are
-        # deployed by Komodo straight from this repo, not through Portainer.
+        # registry, monitoring and immich are deliberately absent: those stacks
+        # are deployed by Komodo straight from this repo, not through Portainer.
         # Two control planes owning one compose project would fight over it.
-        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config","immich","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
+        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config","home-assistant"]') || fromJSON(needs.changes.outputs.stacks) }}
     env:
       IMAGE_BASE: ghcr.io/${{ github.repository }}
     steps:
@@ -149,9 +146,6 @@ jobs:
             monitoring)
               echo 'GRAFANA_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}' > .stack.env
               echo 'HA_TOKEN=${{ secrets.HA_TOKEN }}' >> .stack.env ;;
-            immich)
-              cat immich/deploy.env > .stack.env
-              echo 'DB_PASSWORD=${{ secrets.DB_PASSWORD }}' >> .stack.env ;;
             *)
               : > .stack.env ;;
           esac
