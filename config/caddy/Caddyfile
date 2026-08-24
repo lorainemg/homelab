@@ -9,10 +9,6 @@ http://portainer.sussman.win {
     reverse_proxy portainer:9000
 }
 
-http://netdata.sussman.win {
-    reverse_proxy netdata:19999
-}
-
 http://homeassistant.sussman.win {
     reverse_proxy homeassistant:8123
 }
