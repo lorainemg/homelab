@@ -950,7 +950,7 @@ Last, because `config` owns Caddy and every previous cutover was verified throug
 - Consumes: Komodo's checkout at `/etc/komodo/stacks/config/`.
 - Produces: a Komodo Stack named `config` with `project_name: config`; a `deploy.yml` whose only job builds `ghcr.io/lorainemg/homelab/config-agent` and then calls Komodo's `config` listener.
 
-- [ ] **Step 1: Move the Caddyfile into a directory of its own** *(repo)*
+- [x] **Step 1: Move the Caddyfile into a directory of its own** *(repo)*
 
 The directory rule: a single-file bind mount from a git checkout is frozen at the inode present when the container started, so Caddy must mount a directory.
 
@@ -959,7 +959,7 @@ mkdir -p config/caddy
 git mv config/Caddyfile config/caddy/Caddyfile
 ```
 
-- [ ] **Step 2: Mount it into Caddy and stop the agent syncing it** *(repo)*
+- [x] **Step 2: Mount it into Caddy and stop the agent syncing it** *(repo)*
 
 In `config/docker-compose.yml`, replace the caddy service's `caddy_conf:/etc/caddy` volume with the checkout mount, and drop `caddy_conf` from config-agent's volumes:
 
@@ -987,7 +987,7 @@ Then point config-agent's `/src` at the checkout instead of the image:
 
 Remove `caddy_conf:` from the `volumes:` block at the bottom of the file.
 
-- [ ] **Step 3: Drop the Caddyfile from the agent** *(repo)*
+- [x] **Step 3: Drop the Caddyfile from the agent** *(repo)*
 
 In `config/config-agent/agent.sh`, delete the line `sync_dir /src/caddy /live/caddy` and amend the header comment so it no longer claims to own the Caddyfile. In `config/config-agent/Dockerfile`, delete the three `COPY` lines that bake config, leaving only the agent script:
 
@@ -1003,7 +1003,7 @@ COPY config/config-agent/agent.sh /agent.sh
 ENTRYPOINT ["/bin/sh", "/agent.sh"]
 ```
 
-- [ ] **Step 4: Fold `deploy.env` into `.env.example`** *(repo)*
+- [x] **Step 4: Fold `deploy.env` into `.env.example`** *(repo)*
 
 Append `TZ=America/New_York` and `DOMAIN_BASE=sussman.win` to `config/.env.example`, plus `HOMELAB_PUSH_TOKEN=changeme` and `HA_TOKEN=changeme` with comments.
 
@@ -1011,7 +1011,7 @@ Append `TZ=America/New_York` and `DOMAIN_BASE=sussman.win` to `config/.env.examp
 git rm config/deploy.env
 ```
 
-- [ ] **Step 5: Verify the compose file resolves both ways** *(repo)*
+- [x] **Step 5: Verify the compose file resolves both ways** *(repo)*
 
 ```bash
 docker compose -f config/docker-compose.yml config | grep -A2 'source:'
@@ -1020,7 +1020,7 @@ docker compose --project-directory config config | grep -A2 'source:'
 
 Expected: both print identical absolute paths, and the `../home-assistant/...` mounts resolve to the repo's `home-assistant/` directory, not to a path outside the repo.
 
-- [ ] **Step 6: Strip `deploy.yml` to one job** *(repo)*
+- [x] **Step 6: Strip `deploy.yml` to one job** *(repo)*
 
 Everything except the `config-agent` build goes: the four monitoring image builds, the `Assemble stack env` step, the `cssnr/portainer-stack-deploy-action` step, the stack matrix and the `changes` job's now-unused outputs. What remains:
 
@@ -1062,30 +1062,29 @@ jobs:
       - name: Tell Komodo to deploy config
         if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
         run: |
+          body='{"ref":"refs/heads/main"}'
+          sig=$(printf '%s' "$body" \
+            | openssl dgst -sha256 -hmac '${{ secrets.KOMODO_WEBHOOK_SECRET }}' \
+            | cut -d' ' -f2)
           curl -sf -X POST "${{ secrets.KOMODO_URL }}/listener/github/stack/config/deploy" \
             -H 'Content-Type: application/json' \
-            -H "X-Hub-Signature-256: sha256=$(printf '%s' '{}' | openssl dgst -sha256 -hmac '${{ secrets.KOMODO_WEBHOOK_SECRET }}' | cut -d' ' -f2)" \
+            -H "X-Hub-Signature-256: sha256=$sig" \
             -H 'X-GitHub-Event: push' \
-            -d '{}'
+            -d "$body"
 ```
 
-**Verify this trigger before relying on it.** Komodo's GitHub listener may
-require a parseable push payload (it filters on `ref` against the Stack's
-branch), in which case an empty `{}` body is rejected and nothing deploys —
-silently, because the `curl` still gets a 2xx. Test it by hand once, against
-the `docker-registry` listener, and check for a new Update in Komodo. If it is
-rejected, use the authenticated API instead of the listener, which needs a
-Komodo API key rather than the webhook secret:
+**Verified 2026-08-23.** A hand-made payload *is* accepted, provided it carries
+a `ref` matching the Stack's branch — the listener filters on it. The
+authenticated `/execute` fallback is therefore not needed, and CI never holds a
+Komodo API key.
 
-```yaml
-      - name: Tell Komodo to deploy config
-        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
-        run: |
-          curl -sf -X POST "${{ secrets.KOMODO_URL }}/execute" \
-            -H "Authorization: Bearer ${{ secrets.KOMODO_API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            -d '{"type":"DeployStack","params":{"stack":"config"}}'
-```
+Getting to that answer took two tries, and the first one was a test that could
+not fail. Fired at `docker-registry` (`webhook_force_deploy: false`), the call
+returned 200 and produced no Update — which looked like rejection but was
+Komodo correctly no-opping, because the repo had not changed since the last
+deploy. Repeating it against `monitoring` (`webhook_force_deploy: true`, so it
+deploys unconditionally) took its update count 11 → 12. **A 200 from this
+listener means nothing on its own; only a new Update does.**
 
 Add `KOMODO_URL` and `KOMODO_WEBHOOK_SECRET` (or `KOMODO_API_KEY`) as Actions secrets. Delete `PORTAINER_URL` and `PORTAINER_API_TOKEN`, plus `GRAFANA_ADMIN_PASSWORD`, `HA_TOKEN` and `DB_PASSWORD` — those now live in host `.env` files. Keep `HOMELAB_PUSH_TOKEN`: it is baked into nothing but is still passed to the agent through `config/.env` on the host, so delete it from Actions only after confirming that.
 
@@ -1101,6 +1100,18 @@ git checkout komodo-migration
 This push still deploys `config` through Portainer one last time, from the *old* compose in Portainer's copy — harmless, because the next step replaces it.
 
 - [ ] **Step 8: Delete the Portainer stack and verify the volumes** *(host)*
+
+**Run Step 9's `CreateStack` call before this step.** Caddy proxies
+`komodo.sussman.win` itself (`config/caddy/Caddyfile:25`), so from the moment
+this stack stops until Caddy is back, Komodo's API is unreachable from off the
+box — and Komodo Core publishes no host port (`komodo/docker-compose.yml:33`).
+`CreateStack` only registers the Stack and starts nothing, so it is safe to run
+while Caddy is still up; only the `DeployStack` call has to survive the gap.
+
+**During the gap, bring Caddy up by hand** — `docker compose
+--project-directory /etc/komodo/stacks/config/config up -d` over SSH — then
+trigger a second, real deploy through Komodo once the hostname answers. Same
+proof, one less moving part while locked out.
 
 ```bash
 ssh home 'docker volume ls --format "{{.Name}}" | grep "^config_"'

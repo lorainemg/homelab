@@ -1,12 +1,11 @@
 #!/bin/sh
 # The one config container: owns every repo -> live config flow.
-#   1. Sync the configs baked into this image (HA yaml, mosquitto.conf,
-#      Caddyfile) into the live dirs. Only files that exist in the repo are
+#   1. Sync the configs mounted from the checkout (HA yaml, mosquitto.conf)
+#      into the live dirs. Only files that exist in the repo are
 #      written; runtime state living alongside them (.storage/, *.db,
 #      custom_components/, mosquitto passwd, ...) is untouched; the previous
 #      version of every overwritten file is kept in .sync-backup/ next to it.
-#   2. Poke the running services: caddy runs with --watch and reloads its
-#      Caddyfile by itself; Home Assistant is reloaded (or restarted, when
+#   2. Poke the running services: Home Assistant is reloaded (or restarted, when
 #      configuration.yaml changed) through its API.
 #   3. Loop forever, committing UI-made edits to the watched HA yaml back to
 #      git every BACKUP_INTERVAL seconds with [skip ci], so a backup never
@@ -51,7 +50,6 @@ sync_dir /src/ha-config /live/ha-config
 # on a fresh volume if the directory is missing.
 mkdir -p /live/ha-config/themes
 sync_dir /src/mosquitto /live/mosquitto
-sync_dir /src/caddy /live/caddy
 
 # --- 2. poke the services ---------------------------------------------------
 

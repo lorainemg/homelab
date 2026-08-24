@@ -73,6 +73,20 @@ start of a session; update when a concept lands or a new gap appears.
   this one stack a red CI run is not evidence; check the containers. Same shape
   as the tunnel rule above, applied to the reporting path instead of the
   recovery path. (2026-08-23)
+- **Komodo's GitHub listener takes a hand-made payload, but only with a
+  `ref`** — CI can trigger a deploy by signing a body with
+  `KOMODO_WEBHOOK_SECRET` (HMAC-SHA256, the same scheme GitHub uses) and
+  POSTing it to `/listener/github/stack/<name>/deploy`. The listener filters on
+  `ref` against the Stack's branch, so `{"ref":"refs/heads/main"}` deploys and a
+  bare `{}` does not. No API key needed, so CI holds nothing that can do more
+  than redeploy one stack. (2026-08-23)
+- **A 200 from that listener proves nothing; only a new Update does** — the
+  first test fired at `docker-registry`, which has `webhook_force_deploy:
+  false`: Komodo pulled, saw an unchanged compose file, and correctly did
+  nothing. 200, no Update — indistinguishable from rejection. Re-running it
+  against `monitoring` (`webhook_force_deploy: true`, deploys unconditionally)
+  took its update count 11 → 12 and settled it. Choosing a target that *can*
+  fail is half the test. (2026-08-23)
 
 ## Shaky
 

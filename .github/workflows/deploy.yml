@@ -3,150 +3,71 @@ name: Deploy
 on:
   push:
     branches: [main]
-  workflow_dispatch: # deploy-everything button (fresh server, changed secrets)
+  workflow_dispatch: # rebuild-and-redeploy button (fresh server, changed agent)
 
 permissions:
   contents: read
   packages: write
 
-# Serialize runs: overlapping deploys of the same stacks would race in
-# Portainer. Queued runs wait instead of cancelling — every push deploys.
+# Serialize runs: two builds racing to push :latest would leave GHCR holding
+# whichever finished last, not whichever commit is newest.
 concurrency:
   group: deploy
   cancel-in-progress: false
 
 jobs:
-  changes:
+  # The only stack CI still touches. Every other stack is deployed by Komodo
+  # straight from this repo on GitHub's own webhook — no image, nothing to
+  # build, so CI has no part to play. `config` is the exception because
+  # config-agent is a built image, and Komodo must not pull it until GHCR has
+  # it: that ordering is what the trigger step at the bottom exists to enforce.
+  build-config-agent:
     runs-on: ubuntu-latest
-    outputs:
-      stacks: ${{ steps.filter.outputs.changes }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            # ha-config/mosquitto changes deploy the config stack: that's
-            # where config-agent lives, and it applies them without touching
-            # the HA containers (reloads via the HA API instead).
-            config:
-              - 'config/**'
-              - 'home-assistant/ha-config/**'
-              - 'home-assistant/mosquitto/**'
-              - '.github/workflows/deploy.yml'
-
-  deploy:
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.stacks != '[]'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Only `config` is left on Portainer; registry, monitoring, immich and
-        # home-assistant are deployed by Komodo straight from this repo. Two
-        # control planes owning one compose project would fight over it.
-        stack: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["config"]') || fromJSON(needs.changes.outputs.stacks) }}
-    env:
-      IMAGE_BASE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
 
-      # Per-image filters so only touched configs trigger a rebuild.
+      # Only the agent script lives in the image now. Caddyfile, HA yaml and
+      # mosquitto.conf are mounted from Komodo's checkout, so editing them
+      # doesn't rebuild anything and doesn't need CI at all.
       - uses: dorny/paths-filter@v3
         id: images
         with:
           filters: |
             config_agent:
-              - 'config/Caddyfile'
               - 'config/config-agent/**'
-              - 'home-assistant/ha-config/**'
-              - 'home-assistant/mosquitto/**'
-            prometheus:
-              - 'monitoring/prometheus/**'
-            promtail:
-              - 'monitoring/promtail/**'
-            tempo:
-              - 'monitoring/tempo/**'
-            otelcol:
-              - 'monitoring/otelcol/**'
 
       - uses: docker/login-action@v3
-        if: matrix.stack == 'config' || matrix.stack == 'monitoring'
+        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v6
-        if: matrix.stack == 'config' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true')
+        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
         with:
           context: .
           file: config/config-agent/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_BASE }}/config-agent:latest
-            ${{ env.IMAGE_BASE }}/config-agent:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/config-agent:latest
+            ghcr.io/${{ github.repository }}/config-agent:${{ github.sha }}
 
-      - uses: docker/build-push-action@v6
-        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.prometheus == 'true')
-        with:
-          context: monitoring/prometheus
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/prometheus:latest
-            ${{ env.IMAGE_BASE }}/prometheus:${{ github.sha }}
-
-      - uses: docker/build-push-action@v6
-        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.promtail == 'true')
-        with:
-          context: monitoring/promtail
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/promtail:latest
-            ${{ env.IMAGE_BASE }}/promtail:${{ github.sha }}
-
-      - uses: docker/build-push-action@v6
-        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.tempo == 'true')
-        with:
-          context: monitoring/tempo
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/tempo:latest
-            ${{ env.IMAGE_BASE }}/tempo:${{ github.sha }}
-
-      - uses: docker/build-push-action@v6
-        if: matrix.stack == 'monitoring' && (github.event_name == 'workflow_dispatch' || steps.images.outputs.otelcol == 'true')
-        with:
-          context: monitoring/otelcol
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/otelcol:latest
-            ${{ env.IMAGE_BASE }}/otelcol:${{ github.sha }}
-
-      # Stack env = committed deploy.env (non-secret) + this stack's secrets.
-      - name: Assemble stack env
+      # The image must exist in GHCR before Komodo pulls it. This step is what
+      # closes the build/deploy race: same job, strictly after the build.
+      #
+      # The body must carry a `ref` matching the Stack's branch — Komodo's
+      # listener filters on it, and an empty `{}` is silently ignored while
+      # still returning 200 (verified 2026-08-23 against the monitoring stack).
+      - name: Tell Komodo to deploy config
+        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
         run: |
-          case '${{ matrix.stack }}' in
-            config)
-              cat config/deploy.env > .stack.env
-              echo 'HOMELAB_PUSH_TOKEN=${{ secrets.HOMELAB_PUSH_TOKEN }}' >> .stack.env
-              echo 'HA_TOKEN=${{ secrets.HA_TOKEN }}' >> .stack.env ;;
-            monitoring)
-              echo 'GRAFANA_ADMIN_PASSWORD=${{ secrets.GRAFANA_ADMIN_PASSWORD }}' > .stack.env
-              echo 'HA_TOKEN=${{ secrets.HA_TOKEN }}' >> .stack.env ;;
-            *)
-              : > .stack.env ;;
-          esac
-
-      - uses: cssnr/portainer-stack-deploy-action@v1
-        with:
-          token: ${{ secrets.PORTAINER_API_TOKEN }}
-          url: ${{ secrets.PORTAINER_URL }}
-          endpoint: 3
-          name: ${{ matrix.stack }}
-          type: file
-          file: ${{ matrix.stack }}/docker-compose.yml
-          env_file: .stack.env
-          standalone: true
-          pull: true
-          prune: true
+          body='{"ref":"refs/heads/main"}'
+          sig=$(printf '%s' "$body" \
+            | openssl dgst -sha256 -hmac '${{ secrets.KOMODO_WEBHOOK_SECRET }}' \
+            | cut -d' ' -f2)
+          curl -sf -X POST "${{ secrets.KOMODO_URL }}/listener/github/stack/config/deploy" \
+            -H 'Content-Type: application/json' \
+            -H "X-Hub-Signature-256: sha256=$sig" \
+            -H 'X-GitHub-Event: push' \
+            -d "$body"
