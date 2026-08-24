@@ -1088,7 +1088,7 @@ listener means nothing on its own; only a new Update does.**
 
 Add `KOMODO_URL` and `KOMODO_WEBHOOK_SECRET` (or `KOMODO_API_KEY`) as Actions secrets. Delete `PORTAINER_URL` and `PORTAINER_API_TOKEN`, plus `GRAFANA_ADMIN_PASSWORD`, `HA_TOKEN` and `DB_PASSWORD` — those now live in host `.env` files. Keep `HOMELAB_PUSH_TOKEN`: it is baked into nothing but is still passed to the agent through `config/.env` on the host, so delete it from Actions only after confirming that.
 
-- [ ] **Step 7: Commit and merge to `main`** *(repo)*
+- [x] **Step 7: Commit and merge to `main`** *(repo)*
 
 ```bash
 git add config/ .github/workflows/deploy.yml
@@ -1099,7 +1099,7 @@ git checkout komodo-migration
 
 This push still deploys `config` through Portainer one last time, from the *old* compose in Portainer's copy — harmless, because the next step replaces it.
 
-- [ ] **Step 8: Delete the Portainer stack and verify the volumes** *(host)*
+- [x] **Step 8: Delete the Portainer stack and verify the volumes** *(host)*
 
 **Run Step 9's `CreateStack` call before this step.** Caddy proxies
 `komodo.sussman.win` itself (`config/caddy/Caddyfile:25`), so from the moment
@@ -1119,7 +1119,7 @@ ssh home 'docker volume ls --format "{{.Name}}" | grep "^config_"'
 
 Expected: `config_caddy_data` and `config_caddy_config` still present. `config_caddy_conf` is now unused and can be removed later; leave it for now as a fallback copy of the Caddyfile.
 
-- [ ] **Step 9: Create the Komodo Stack, place `.env`, deploy** *(API + host)*
+- [x] **Step 9: Create the Komodo Stack, place `.env`, deploy** *(API + host)*
 
 ```bash
 curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
@@ -1154,17 +1154,25 @@ curl -s -X POST https://komodo.sussman.win/execute -H "Authorization: Bearer $JW
 
 **This is the deploy most likely to lock you out**, because it recreates Caddy. If hostnames stop answering, the tunnel is still up (Task 2) — reach the box over SSH and run `docker compose --project-directory /etc/komodo/stacks/config/config up -d` by hand.
 
-- [ ] **Step 10: Verify every hostname still routes**
+- [x] **Step 10: Verify every hostname still routes**
 
 ```bash
-for h in komodo grafana immich home-assistant registry portainer; do
+# Take this list from config/caddy/Caddyfile, not from memory: the Home
+# Assistant host is `homeassistant`, with no hyphen, and `home-assistant`
+# 404s at Cloudflare without ever reaching Caddy.
+for h in komodo grafana immich homeassistant registry portainer; do
   printf '%s: ' "$h"; curl -s -o /dev/null -w '%{http_code}\n' "https://$h.sussman.win"
 done
 ```
 
 Expected: no `502` and no `530`.
 
-- [ ] **Step 11: Verify a Caddyfile edit hot-reloads with no build and no recreation**
+- [x] **Step 11: Verify a Caddyfile edit hot-reloads with no build and no recreation**
+
+**Do Step 13's webhook first.** `webhook_enabled: true` on the Stack only means
+the listener endpoint exists; GitHub still has to be told to call it, and there
+is one webhook per stack. Without it this step's push lands on `main` and
+nothing happens at all — verified the hard way on 2026-08-23.
 
 The single clearest proof the design works. Note Caddy's container start time, edit `config/caddy/Caddyfile` (add a comment), push to `main`, then:
 
@@ -1174,7 +1182,7 @@ ssh home 'docker exec config-caddy grep -c . /etc/caddy/Caddyfile; docker inspec
 
 Expected: the new line count, and a `StartedAt` **unchanged** from before the push. A changed start time means the container was recreated — the failure the volume-and-`--watch` design exists to prevent.
 
-- [ ] **Step 12: Verify an `agent.sh` edit reaches the agent through CI**
+- [x] **Step 12: Verify an `agent.sh` edit reaches the agent through CI**
 
 The other half: this one *must* involve a build. Add a harmless `echo` to `config/config-agent/agent.sh`, push, watch the Actions run build and push the image, then confirm Komodo redeployed *after* it:
 
@@ -1184,7 +1192,7 @@ ssh home 'docker logs --tail 5 config-agent; docker inspect config-agent --forma
 
 Expected: the new echo present, and a start time later than the Actions run's completion. If the agent is running the old script, the trigger fired before the push completed — the race, and the reason this step exists.
 
-- [ ] **Step 13: Add the GitHub webhook and commit the README** *(repo)*
+- [x] **Step 13: Add the GitHub webhook and commit the README** *(repo)*
 
 Add the `config` webhook (`.../stack/config/deploy`) for completeness, so a compose-only change deploys without waiting on CI. Update the README's CI/CD section to describe the one-build pipeline and the Komodo trigger.
 
