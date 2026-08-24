@@ -87,6 +87,23 @@ start of a session; update when a concept lands or a new gap appears.
   against `monitoring` (`webhook_force_deploy: true`, deploys unconditionally)
   took its update count 11 → 12 and settled it. Choosing a target that *can*
   fail is half the test. (2026-08-23)
+- **The checkout-mounted design, proven end to end** — a Caddyfile edit pushed
+  at 01:00:25 was deployed by Komodo at 01:00:26, Caddy logged `config file
+  changed; reloading`, and `StartedAt` did not move: no image build, no
+  container recreation, no dropped connection. The mirror case works too — an
+  `agent.sh` edit builds in CI, and only *then* does CI trigger the deploy that
+  recreates `config-agent`, while Caddy sits untouched. Both halves of Task 7's
+  design verified. (2026-08-23)
+- **`webhook_enabled: true` is a door, not a knock** — it opens Komodo's
+  listener for that stack; GitHub still needs its own webhook per stack pointing
+  at `/listener/github/stack/<name>/deploy`. Forgetting it means a push lands on
+  `main`, CI goes green, and nothing deploys — no error anywhere. (2026-08-23)
+- **A missing GitHub Actions secret is an empty string, not an error** —
+  `${{ secrets.KOMODO_URL }}` for a secret that was never created expands to
+  nothing, so `curl "$EMPTY/listener/..."` failed with exit code 3 (malformed
+  URL) rather than anything mentioning secrets. Worth knowing which exit code
+  means what: curl 3 is a bad URL, 6 is DNS, 7 is connection refused, 22 is an
+  HTTP error status under `-f`. (2026-08-23)
 
 ## Shaky
 
@@ -99,9 +116,14 @@ start of a session; update when a concept lands or a new gap appears.
 
 ## Next
 
-- Exercise a rollback from Komodo's UI — the last unproven verdict criterion.
-- Execute
-  [the migration design](docs/superpowers/specs/2026-08-20-portainer-to-komodo-migration-design.md).
+- Finish [the migration](docs/superpowers/plans/2026-08-20-portainer-to-komodo-migration.md):
+  Tasks 1-7 are done (registry, tunnel, monitoring, immich, home-assistant and
+  config are all on Komodo, and CI is down to one build job). Task 8 moves
+  `trakt-tg-bot` — which deploys itself from another repo through Portainer's
+  API — onto a Komodo Stack in `file_contents` mode; Task 9 then retires
+  Portainer.
+- Komodo Resource Sync: declare the Stacks as TOML in this repo instead of
+  creating them by API call, so the control plane's own config is versioned.
 
 ## Open questions
 
