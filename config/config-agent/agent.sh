@@ -25,6 +25,8 @@ REPO_DIR=/work/repo
 DEST=home-assistant/ha-config
 CHANGES=/tmp/changed
 
+echo "config-agent: syncing /src (mounted from Komodo's checkout) -> /live"
+
 # --- 1. repo -> live sync ---------------------------------------------------
 
 sync_dir() {
