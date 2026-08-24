@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Branch:** all repo work happens on `komodo-migration`, branched from `main`. The spec and this plan are already committed there.
-- **Pushing to `main` deploys.** Until Task 8, `main` still drives Portainer deploys for whatever stacks have not moved. Merge deliberately, never "to save work".
+- **Pushing to `main` deploys.** Until Task 9, `main` still drives Portainer deploys for whatever stacks have not moved. Merge deliberately, never "to save work".
 - **Compose project names are pinned and must not change:** `config`, `monitoring`, `immich`, `home-assistant`. The live named volumes carry these as prefixes (`monitoring_grafana_data`, `monitoring_loki_data`, `monitoring_prometheus_data`, `monitoring_tempo_data`, `config_caddy_conf`, `config_caddy_data`, `config_caddy_config`, `immich_model-cache`). A different project name creates empty new volumes and the service starts perfectly healthy with no data.
 - **Mount directories, never single files.** A bind mount pins an inode; git replaces files rather than editing them, so a single-file mount from a checkout is frozen at the version present when the container started.
 - **Secrets never in git.** Every `.env` is gitignored by the existing `*/.env` rule; only `.env.example` files are committed. Enable the gitleaks hook once per clone: `cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`.
@@ -238,7 +238,7 @@ In `scripts/bootstrap.sh`, change the STACKS line and its comment:
 STACKS=(tunnel portainer registry config immich home-assistant monitoring)
 ```
 
-`portainer` stays in the list until Task 8 retires it.
+`portainer` stays in the list until Task 9 retires it.
 
 - [x] **Step 7: Update the README** *(repo)*
 
@@ -950,7 +950,7 @@ Last, because `config` owns Caddy and every previous cutover was verified throug
 - Consumes: Komodo's checkout at `/etc/komodo/stacks/config/`.
 - Produces: a Komodo Stack named `config` with `project_name: config`; a `deploy.yml` whose only job builds `ghcr.io/lorainemg/homelab/config-agent` and then calls Komodo's `config` listener.
 
-- [ ] **Step 1: Move the Caddyfile into a directory of its own** *(repo)*
+- [x] **Step 1: Move the Caddyfile into a directory of its own** *(repo)*
 
 The directory rule: a single-file bind mount from a git checkout is frozen at the inode present when the container started, so Caddy must mount a directory.
 
@@ -959,7 +959,7 @@ mkdir -p config/caddy
 git mv config/Caddyfile config/caddy/Caddyfile
 ```
 
-- [ ] **Step 2: Mount it into Caddy and stop the agent syncing it** *(repo)*
+- [x] **Step 2: Mount it into Caddy and stop the agent syncing it** *(repo)*
 
 In `config/docker-compose.yml`, replace the caddy service's `caddy_conf:/etc/caddy` volume with the checkout mount, and drop `caddy_conf` from config-agent's volumes:
 
@@ -987,7 +987,7 @@ Then point config-agent's `/src` at the checkout instead of the image:
 
 Remove `caddy_conf:` from the `volumes:` block at the bottom of the file.
 
-- [ ] **Step 3: Drop the Caddyfile from the agent** *(repo)*
+- [x] **Step 3: Drop the Caddyfile from the agent** *(repo)*
 
 In `config/config-agent/agent.sh`, delete the line `sync_dir /src/caddy /live/caddy` and amend the header comment so it no longer claims to own the Caddyfile. In `config/config-agent/Dockerfile`, delete the three `COPY` lines that bake config, leaving only the agent script:
 
@@ -1003,7 +1003,7 @@ COPY config/config-agent/agent.sh /agent.sh
 ENTRYPOINT ["/bin/sh", "/agent.sh"]
 ```
 
-- [ ] **Step 4: Fold `deploy.env` into `.env.example`** *(repo)*
+- [x] **Step 4: Fold `deploy.env` into `.env.example`** *(repo)*
 
 Append `TZ=America/New_York` and `DOMAIN_BASE=sussman.win` to `config/.env.example`, plus `HOMELAB_PUSH_TOKEN=changeme` and `HA_TOKEN=changeme` with comments.
 
@@ -1011,7 +1011,7 @@ Append `TZ=America/New_York` and `DOMAIN_BASE=sussman.win` to `config/.env.examp
 git rm config/deploy.env
 ```
 
-- [ ] **Step 5: Verify the compose file resolves both ways** *(repo)*
+- [x] **Step 5: Verify the compose file resolves both ways** *(repo)*
 
 ```bash
 docker compose -f config/docker-compose.yml config | grep -A2 'source:'
@@ -1020,7 +1020,7 @@ docker compose --project-directory config config | grep -A2 'source:'
 
 Expected: both print identical absolute paths, and the `../home-assistant/...` mounts resolve to the repo's `home-assistant/` directory, not to a path outside the repo.
 
-- [ ] **Step 6: Strip `deploy.yml` to one job** *(repo)*
+- [x] **Step 6: Strip `deploy.yml` to one job** *(repo)*
 
 Everything except the `config-agent` build goes: the four monitoring image builds, the `Assemble stack env` step, the `cssnr/portainer-stack-deploy-action` step, the stack matrix and the `changes` job's now-unused outputs. What remains:
 
@@ -1062,30 +1062,29 @@ jobs:
       - name: Tell Komodo to deploy config
         if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
         run: |
+          body='{"ref":"refs/heads/main"}'
+          sig=$(printf '%s' "$body" \
+            | openssl dgst -sha256 -hmac '${{ secrets.KOMODO_WEBHOOK_SECRET }}' \
+            | cut -d' ' -f2)
           curl -sf -X POST "${{ secrets.KOMODO_URL }}/listener/github/stack/config/deploy" \
             -H 'Content-Type: application/json' \
-            -H "X-Hub-Signature-256: sha256=$(printf '%s' '{}' | openssl dgst -sha256 -hmac '${{ secrets.KOMODO_WEBHOOK_SECRET }}' | cut -d' ' -f2)" \
+            -H "X-Hub-Signature-256: sha256=$sig" \
             -H 'X-GitHub-Event: push' \
-            -d '{}'
+            -d "$body"
 ```
 
-**Verify this trigger before relying on it.** Komodo's GitHub listener may
-require a parseable push payload (it filters on `ref` against the Stack's
-branch), in which case an empty `{}` body is rejected and nothing deploys —
-silently, because the `curl` still gets a 2xx. Test it by hand once, against
-the `docker-registry` listener, and check for a new Update in Komodo. If it is
-rejected, use the authenticated API instead of the listener, which needs a
-Komodo API key rather than the webhook secret:
+**Verified 2026-08-23.** A hand-made payload *is* accepted, provided it carries
+a `ref` matching the Stack's branch — the listener filters on it. The
+authenticated `/execute` fallback is therefore not needed, and CI never holds a
+Komodo API key.
 
-```yaml
-      - name: Tell Komodo to deploy config
-        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
-        run: |
-          curl -sf -X POST "${{ secrets.KOMODO_URL }}/execute" \
-            -H "Authorization: Bearer ${{ secrets.KOMODO_API_KEY }}" \
-            -H 'Content-Type: application/json' \
-            -d '{"type":"DeployStack","params":{"stack":"config"}}'
-```
+Getting to that answer took two tries, and the first one was a test that could
+not fail. Fired at `docker-registry` (`webhook_force_deploy: false`), the call
+returned 200 and produced no Update — which looked like rejection but was
+Komodo correctly no-opping, because the repo had not changed since the last
+deploy. Repeating it against `monitoring` (`webhook_force_deploy: true`, so it
+deploys unconditionally) took its update count 11 → 12. **A 200 from this
+listener means nothing on its own; only a new Update does.**
 
 Add `KOMODO_URL` and `KOMODO_WEBHOOK_SECRET` (or `KOMODO_API_KEY`) as Actions secrets. Delete `PORTAINER_URL` and `PORTAINER_API_TOKEN`, plus `GRAFANA_ADMIN_PASSWORD`, `HA_TOKEN` and `DB_PASSWORD` — those now live in host `.env` files. Keep `HOMELAB_PUSH_TOKEN`: it is baked into nothing but is still passed to the agent through `config/.env` on the host, so delete it from Actions only after confirming that.
 
@@ -1101,6 +1100,18 @@ git checkout komodo-migration
 This push still deploys `config` through Portainer one last time, from the *old* compose in Portainer's copy — harmless, because the next step replaces it.
 
 - [ ] **Step 8: Delete the Portainer stack and verify the volumes** *(host)*
+
+**Run Step 9's `CreateStack` call before this step.** Caddy proxies
+`komodo.sussman.win` itself (`config/caddy/Caddyfile:25`), so from the moment
+this stack stops until Caddy is back, Komodo's API is unreachable from off the
+box — and Komodo Core publishes no host port (`komodo/docker-compose.yml:33`).
+`CreateStack` only registers the Stack and starts nothing, so it is safe to run
+while Caddy is still up; only the `DeployStack` call has to survive the gap.
+
+**During the gap, bring Caddy up by hand** — `docker compose
+--project-directory /etc/komodo/stacks/config/config up -d` over SSH — then
+trigger a second, real deploy through Komodo once the hostname answers. Same
+proof, one less moving part while locked out.
 
 ```bash
 ssh home 'docker volume ls --format "{{.Name}}" | grep "^config_"'
@@ -1183,7 +1194,159 @@ git add README.md && git commit -m "describe the komodo deploy pipeline"
 
 ---
 
-### Task 8: Retire Portainer
+### Task 8: Move `trakt-tg-bot` onto Komodo
+
+Not defined in this repo — it lives in [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot),
+generates its compose file with .NET Aspire at build time, and pushes it to Portainer's
+API from its own CI. Nothing here moves it, and Task 9 cannot retire Portainer until
+it does: the containers would keep running, but the bot's next deploy would call an API
+that no longer exists.
+
+It is done as a Komodo Stack in **`file_contents` mode** rather than git mode, because
+the compose file is generated, not committed. CI sends the YAML to Komodo, Komodo stores
+and deploys it — a one-for-one replacement for `cssnr/portainer-stack-deploy-action`,
+and the bot then appears in Komodo beside every other stack.
+
+**Files:**
+- Modify (other repo): `traktv-tg-bot/.github/workflows/deploy-main.yml`
+
+**Interfaces:**
+- Consumes: a Komodo service user + API key, and the Aspire-generated compose file.
+- Produces: a Komodo Stack named `trakt-tg-bot` with `project_name: trakt-tg-bot`.
+
+- [ ] **Step 1: Capture the baseline** *(host)*
+
+```bash
+ssh home 'docker ps --filter label=com.docker.compose.project=trakt-tg-bot --format "{{.Names}}\t{{.Status}}"
+docker volume ls --format "{{.Name}}" | grep trakt'
+```
+
+Expected three containers (`bot`, `trakt-db`, `aspire`) and the named volume
+`trakt-tg-bot_apphost-<hash>-postgres-data`. **Write the volume name down exactly.**
+
+- [ ] **Step 2: Create a service user and API key** *(API)*
+
+CI cannot log in as the admin. Komodo supports non-interactive callers via a service
+user with a key/secret pair, sent as `X-Api-Key` and `X-Api-Secret` headers instead of
+`Authorization: Bearer`.
+
+```bash
+UID=$(curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"CreateServiceUser","params":{"username":"trakt-tg-bot-ci","description":"deploys the trakt bot stack"}}' \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["_id"]["$oid"])')
+
+curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
+  -H 'Content-Type: application/json' \
+  -d "{\"type\":\"CreateApiKeyForServiceUser\",\"params\":{\"user_id\":\"$UID\",\"name\":\"github-actions\",\"expires\":0}}"
+```
+
+The response carries the key and the secret. The secret is shown **once**. Put both in
+the bot repo as `KOMODO_API_KEY` and `KOMODO_API_SECRET`, plus `KOMODO_URL`.
+
+- [ ] **Step 3: Create the Stack in `file_contents` mode** *(API)*
+
+`file_contents` starts empty; CI fills it on every deploy. `project_name` must match the
+existing volume prefix exactly — this stack's Postgres is a *named* volume, so a wrong
+project name gives the bot an empty database that starts perfectly healthy.
+
+```bash
+curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT" \
+  -H 'Content-Type: application/json' -d '{
+  "type": "CreateStack",
+  "params": {
+    "name": "trakt-tg-bot",
+    "config": {
+      "server_id": "<server id>",
+      "project_name": "trakt-tg-bot",
+      "file_contents": "services: {}",
+      "webhook_enabled": false,
+      "auto_update": false,
+      "poll_for_updates": false
+    }
+  }
+}'
+```
+
+No webhook: this stack is not driven by pushes to this repo. Its own CI calls Komodo
+directly.
+
+- [ ] **Step 4: Replace the deploy step in the bot's repo** *(other repo)*
+
+In `deploy-main.yml`, the final step is currently `cssnr/portainer-stack-deploy-action@v1`
+with `PORTAINER_URL` / `PORTAINER_API_TOKEN`, `endpoint: 3`, `name: trakt-tg-bot`.
+Replace it with two calls — push the generated compose, then deploy:
+
+```yaml
+      - name: Deploy to Komodo
+        env:
+          KOMODO_URL: ${{ secrets.KOMODO_URL }}
+          KOMODO_API_KEY: ${{ secrets.KOMODO_API_KEY }}
+          KOMODO_API_SECRET: ${{ secrets.KOMODO_API_SECRET }}
+        run: |
+          set -euo pipefail
+          jq -n --rawfile yaml docker-compose.yaml '{
+            type: "UpdateStack",
+            params: { id: "trakt-tg-bot", config: { file_contents: $yaml } }
+          }' > payload.json
+          curl -sf -X POST "$KOMODO_URL/write" \
+            -H "X-Api-Key: $KOMODO_API_KEY" -H "X-Api-Secret: $KOMODO_API_SECRET" \
+            -H 'Content-Type: application/json' --data @payload.json > /dev/null
+          curl -sf -X POST "$KOMODO_URL/execute" \
+            -H "X-Api-Key: $KOMODO_API_KEY" -H "X-Api-Secret: $KOMODO_API_SECRET" \
+            -H 'Content-Type: application/json' \
+            -d '{"type":"DeployStack","params":{"stack":"trakt-tg-bot"}}'
+```
+
+Point `--rawfile` at whatever path Aspire writes the compose file to. Build the JSON with
+`jq`, never string interpolation — the YAML contains quotes and newlines.
+
+`curl -sf` fails the job on a non-2xx, so a broken deploy shows as a red run rather than
+a silent pass. Note `/execute` is asynchronous: a 2xx means *accepted*, not *deployed*.
+To make the job's result meaningful, poll `/read` `GetUpdate` until `status: Complete`
+and fail on `success: false`.
+
+- [ ] **Step 5: Delete the Portainer stack, keeping the volume**
+
+Portainer → Stacks → `trakt-tg-bot` → Remove, leaving volumes. Then:
+
+```bash
+ssh home 'docker volume ls --format "{{.Name}}" | grep trakt'
+```
+
+Expected: the volume from Step 1, unchanged. **If it is gone, stop.**
+
+- [ ] **Step 6: Run the bot's CI and verify** *(other repo)*
+
+Trigger the workflow. Then:
+
+```bash
+ssh home 'docker ps --filter label=com.docker.compose.project=trakt-tg-bot --format "{{.Names}}\t{{.Status}}"
+docker volume ls --format "{{.Name}}" | grep trakt'
+```
+
+Expected: the three containers back, and the **same** volume name — not a new one. A new
+volume name means `project_name` or the Aspire-generated volume key changed, and the bot
+is running on an empty database.
+
+- [ ] **Step 7: Note the seam in the README** *(repo)*
+
+The README paragraph about `trakt-tg-bot` says it "deploys itself from its own repo's CI
+via the Portainer API — the same pattern this repo uses". Both halves are now wrong.
+Rewrite it: it deploys itself via the Komodo API in `file_contents` mode, and this repo
+only documents the seam.
+
+```bash
+git add README.md && git commit -m "note that the trakt bot deploys itself through komodo now"
+```
+
+**Rollback for this task:** restore the old deploy step in the bot's repo and re-run its
+CI; Portainer recreates the stack and reattaches the same named volume, because the
+project name is `trakt-tg-bot` on both sides.
+
+---
+
+### Task 9: Retire Portainer
 
 **Files:**
 - Delete: `portainer/docker-compose.yml`, `portainer/.env.example`
@@ -1201,7 +1364,13 @@ git add README.md && git commit -m "describe the komodo deploy pipeline"
 ssh home "docker ps --format '{{index .Labels \"com.docker.compose.project\"}}' | sort -u"
 ```
 
-Expected projects: `config`, `docker-registry`, `home-assistant`, `immich`, `komodo`, `monitoring`, `trakt-tg-bot`, `tunnel`. **If any container is still labelled by a Portainer-managed project you have not migrated, stop.**
+Expected projects: `config`, `docker-registry`, `home-assistant`, `immich`, `komodo`,
+`monitoring`, `trakt-tg-bot`, `tunnel`. All of them are now either a Komodo Stack or
+host-managed (`komodo`, `tunnel`); `trakt-tg-bot` became a Komodo Stack in Task 8.
+**If any container is still labelled by a Portainer-managed project you have not
+migrated, stop** — and check the *deploy path* as well as the container: a stack whose
+CI still calls the Portainer API breaks the moment Portainer stops, even though its
+containers keep running.
 
 - [ ] **Step 2: Stop Portainer but keep its data** *(host)*
 
@@ -1266,4 +1435,4 @@ Per stack, at any point, without touching the others:
 
 The volume reattaches either way, because the project name is pinned on both sides. If the tunnel move (Task 2) is what broke, `cloudflared` returns to `portainer/docker-compose.yml` and comes back up from the host with an unchanged token.
 
-Nothing here is one-way until Task 8 Step 8 deletes `portainer_data`, which is why that step waits a month.
+Nothing here is one-way until Task 9 Step 8 deletes `portainer_data`, which is why that step waits a month.
