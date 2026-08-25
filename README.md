@@ -91,15 +91,19 @@ deploy — CI's or Komodo's — can take down the route used to repair it.
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. Deployed by Komodo from this repo on a GitHub webhook, not by CI — the first stack to move |
 | [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
 | [portainer/](portainer/) | Portainer CE | Outgoing control plane, retained as the rollback target until the migration completes. Host-managed, never CI-deployed |
-| [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |
+| [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | The control plane: clones this repo on the server and deploys every stack above from it. Host-managed, never CI-deployed |
 
 One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
 for Trakt.tv + Postgres 17 + Aspire dashboard) generates its compose file
-with .NET Aspire and deploys itself from its own repo's CI via the Portainer
-API — the same pattern this repo uses for the infrastructure stacks. This
+with .NET Aspire and deploys itself from its own repo's CI through the Komodo
+API: a `trakt-tg-bot` Stack in `file_contents` mode, filled and deployed by CI
+with a service-user key that has Write on that one stack and nothing else. This
 repo only documents the seam (the monitoring stack joins its network to
-collect telemetry).
+collect telemetry). One sharp edge to know: Aspire derives the Postgres volume
+name from an apphost hash, so an Aspire CLI update can silently point the stack
+at a fresh empty volume — the old data survives under the previous name, and
+the fix is naming the volume explicitly in the AppHost.
 
 Highlights:
 

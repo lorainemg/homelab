@@ -105,6 +105,30 @@ start of a session; update when a concept lands or a new gap appears.
   means what: curl 3 is a bad URL, 6 is DNS, 7 is connection refused, 22 is an
   HTTP error status under `-f`. (2026-08-23)
 
+- **A generated volume name is a landmine under a green deploy** — Aspire
+  derives the bot's Postgres volume from an apphost hash, and an unpinned
+  `curl | bash` CLI install meant a new Aspire version changed it:
+  `apphost-e7f9f553c0` → `apphost-48ef807faa`. Compose doesn't warn — it
+  creates the unknown name empty, Postgres initialises a blank database, and
+  every container reports healthy. Caught only because the migration plan's
+  gate demanded the *same volume name*, not healthy containers; recovered by
+  cloning the old volume's bytes into the new name and proving it with a row
+  count (128 watch_statuses). Durable fix: name the volume explicitly in the
+  AppHost (`WithDataVolume`). (2026-08-25)
+- **`[skip ci]` survives a squash merge** — GitHub's default squash message
+  pastes in every branch commit's subject, and honors the tag *anywhere* in
+  the message. A `[skip ci]` written for a direct-push plan silently cancelled
+  the deploy when the plan changed to a PR. If a branch commit carries the tag,
+  edit the squash message before merging. (2026-08-25)
+- **Verdict on `komodo_client` (npm) for CI: works, not worth it** — the
+  client pulls in `mogh_auth_client`, which reads `localStorage` at import
+  time; in Node that needs `--experimental-webstorage --localstorage-file`
+  (Node 22; newer Node needs only the file flag — verified on real Node 22 in
+  Docker after wrongly "verifying" on local Node 26). A pin plus two runtime
+  flags to adopt a typed client lost to 30 lines of curl+jq. Both variants
+  push compose + env in one `UpdateStack` and poll `GetUpdate`, because
+  `/execute`'s 2xx means accepted, not deployed. (2026-08-25)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
@@ -117,11 +141,12 @@ start of a session; update when a concept lands or a new gap appears.
 ## Next
 
 - Finish [the migration](docs/superpowers/plans/2026-08-20-portainer-to-komodo-migration.md):
-  Tasks 1-7 are done (registry, tunnel, monitoring, immich, home-assistant and
-  config are all on Komodo, and CI is down to one build job). Task 8 moves
-  `trakt-tg-bot` — which deploys itself from another repo through Portainer's
-  API — onto a Komodo Stack in `file_contents` mode; Task 9 then retires
-  Portainer.
+  Tasks 1-8 are done: every stack including `trakt-tg-bot` deploys through
+  Komodo, and CI is down to one build job. Task 9 (retire Portainer) is all
+  that remains.
+- In the bot repo: pin the Aspire volume name (`WithDataVolume`) and the Aspire
+  CLI version, so a CLI update can never re-point the stack at an empty
+  database again.
 - Komodo Resource Sync: declare the Stacks as TOML in this repo instead of
   creating them by API call, so the control plane's own config is versioned.
 

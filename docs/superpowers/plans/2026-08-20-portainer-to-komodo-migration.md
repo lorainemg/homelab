@@ -1222,7 +1222,7 @@ and the bot then appears in Komodo beside every other stack.
 - Consumes: a Komodo service user + API key, and the Aspire-generated compose file.
 - Produces: a Komodo Stack named `trakt-tg-bot` with `project_name: trakt-tg-bot`.
 
-- [ ] **Step 1: Capture the baseline** *(host)*
+- [x] **Step 1: Capture the baseline** *(host)*
 
 ```bash
 ssh home 'docker ps --filter label=com.docker.compose.project=trakt-tg-bot --format "{{.Names}}\t{{.Status}}"
@@ -1232,7 +1232,7 @@ docker volume ls --format "{{.Name}}" | grep trakt'
 Expected three containers (`bot`, `trakt-db`, `aspire`) and the named volume
 `trakt-tg-bot_apphost-<hash>-postgres-data`. **Write the volume name down exactly.**
 
-- [ ] **Step 2: Create a service user and API key** *(API)*
+- [x] **Step 2: Create a service user and API key** *(API)*
 
 CI cannot log in as the admin. Komodo supports non-interactive callers via a service
 user with a key/secret pair, sent as `X-Api-Key` and `X-Api-Secret` headers instead of
@@ -1252,7 +1252,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 The response carries the key and the secret. The secret is shown **once**. Put both in
 the bot repo as `KOMODO_API_KEY` and `KOMODO_API_SECRET`, plus `KOMODO_URL`.
 
-- [ ] **Step 3: Create the Stack in `file_contents` mode** *(API)*
+- [x] **Step 3: Create the Stack in `file_contents` mode** *(API)*
 
 `file_contents` starts empty; CI fills it on every deploy. `project_name` must match the
 existing volume prefix exactly — this stack's Postgres is a *named* volume, so a wrong
@@ -1279,7 +1279,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 No webhook: this stack is not driven by pushes to this repo. Its own CI calls Komodo
 directly.
 
-- [ ] **Step 4: Replace the deploy step in the bot's repo** *(other repo)*
+- [x] **Step 4: Replace the deploy step in the bot's repo** *(other repo)*
 
 In `deploy-main.yml`, the final step is currently `cssnr/portainer-stack-deploy-action@v1`
 with `PORTAINER_URL` / `PORTAINER_API_TOKEN`, `endpoint: 3`, `name: trakt-tg-bot`.
@@ -1314,7 +1314,7 @@ a silent pass. Note `/execute` is asynchronous: a 2xx means *accepted*, not *dep
 To make the job's result meaningful, poll `/read` `GetUpdate` until `status: Complete`
 and fail on `success: false`.
 
-- [ ] **Step 5: Delete the Portainer stack, keeping the volume**
+- [x] **Step 5: Delete the Portainer stack, keeping the volume**
 
 Portainer → Stacks → `trakt-tg-bot` → Remove, leaving volumes. Then:
 
@@ -1324,7 +1324,7 @@ ssh home 'docker volume ls --format "{{.Name}}" | grep trakt'
 
 Expected: the volume from Step 1, unchanged. **If it is gone, stop.**
 
-- [ ] **Step 6: Run the bot's CI and verify** *(other repo)*
+- [x] **Step 6: Run the bot's CI and verify** *(other repo)*
 
 Trigger the workflow. Then:
 
@@ -1337,7 +1337,15 @@ Expected: the three containers back, and the **same** volume name — not a new 
 volume name means `project_name` or the Aspire-generated volume key changed, and the bot
 is running on an empty database.
 
-- [ ] **Step 7: Note the seam in the README** *(repo)*
+**This fired for real (2026-08-25).** `project_name` was right, but the workflow installs
+the Aspire CLI unpinned, and the new version derived a different apphost hash:
+`apphost-e7f9f553c0` → `apphost-48ef807faa`. Three healthy containers, empty database,
+green CI. Recovered by stopping the stack and cloning the old volume's bytes into the
+new one, then verifying by *querying* (128 watch_statuses). The durable fix is naming
+the volume explicitly in the AppHost (`WithDataVolume`) so the hash stops mattering —
+open follow-up in the bot repo. Until then the old volume stays on disk as a backup.
+
+- [x] **Step 7: Note the seam in the README** *(repo)*
 
 The README paragraph about `trakt-tg-bot` says it "deploys itself from its own repo's CI
 via the Portainer API — the same pattern this repo uses". Both halves are now wrong.
