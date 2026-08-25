@@ -14,9 +14,10 @@ scrape_configs:
   - job_name: 'home-assistant'
     # Long-lived HA access token, kept out of git.
     # Create it in HA (profile -> Security -> Long-lived access tokens) and
-    # write it to prometheus/secrets/ha_token (see README).
+    # set it as HA_TOKEN in monitoring/.env. The entrypoint writes it to the
+    # path below, a tmpfs outside this read-only config mount.
     authorization:
-      credentials_file: /etc/prometheus/secrets/ha_token
+      credentials_file: /run/prometheus/ha_token
     static_configs:
       - targets: ['homeassistant:8123']
     metrics_path: /api/prometheus

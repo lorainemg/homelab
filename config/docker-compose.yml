@@ -4,8 +4,8 @@ services:
   # plane, so redeploying this stack can't sever CI's path to Portainer.
 
   caddy:
-    # Plain upstream image, pinned. The Caddyfile lives in the caddy_conf
-    # volume, written by config-agent below; --watch hot-reloads it in place.
+    # Plain upstream image, pinned. The Caddyfile comes from Komodo's checkout
+    # (./caddy below), not from a volume; --watch hot-reloads it in place.
     # A config push therefore never recreates this container — and never
     # severs the tunnel -> caddy -> Portainer path that the deploy's own API
     # response travels through. Only editing this file (or bumping the pin)
@@ -22,14 +22,19 @@ services:
       - TZ=${TZ}
       - DOMAIN_BASE=${DOMAIN_BASE}
     volumes:
-      - caddy_conf:/etc/caddy
+      # Mounted from the checkout, not written by config-agent: a pull updates
+      # the file on disk and --watch reloads it in place, so no image build and
+      # no container recreation sit between an edit and Caddy running it.
+      # Directory, not file: git replaces files, and a single-file bind mount
+      # would stay pinned to the old inode forever.
+      - ./caddy:/etc/caddy:ro
       - caddy_data:/data
       - caddy_config:/config
     networks:
       - internal
 
-  # The one script container: syncs every repo-versioned config (HA yaml,
-  # mosquitto.conf, Caddyfile) from the CI-built image to the live dirs,
+  # The one script container: syncs the repo-versioned configs that must be
+  # copied rather than mounted (HA yaml, mosquitto.conf) from the checkout,
   # pokes HA to reload over its API, then commits UI-made HA edits back to
   # git hourly with [skip ci]. Deliberately NOT a depends_on of caddy: that
   # coupling would recreate caddy whenever this image changes, which is the
@@ -43,7 +48,8 @@ services:
       - HOMELAB_PUSH_TOKEN=${HOMELAB_PUSH_TOKEN}
       - HA_TOKEN=${HA_TOKEN}
     volumes:
-      - caddy_conf:/live/caddy
+      - ../home-assistant/ha-config:/src/ha-config:ro
+      - ../home-assistant/mosquitto:/src/mosquitto:ro
       - ${DATA_ROOT:-/data}/home-assistant/ha-config:/live/ha-config
       - ${DATA_ROOT:-/data}/mosquitto/config:/live/mosquitto
     networks:
@@ -56,4 +62,3 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
-  caddy_conf:

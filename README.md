@@ -6,10 +6,12 @@ internet through a Cloudflare Tunnel and fully observable with a
 Grafana/Prometheus/Loki/Tempo stack.
 
 Everything needed to rebuild the server from scratch lives in this repo.
-Pushing to `main` deploys: GitHub Actions builds config-baked images, pushes
-them to GHCR and updates the affected Portainer stacks through the Cloudflare
-Tunnel. Only the data stays on the machine; deploy secrets live in GitHub
-Actions secrets.
+Pushing to `main` deploys — but CI is no longer the deployer. Komodo checks
+this repo out *on the server* and runs `docker compose` there, triggered by a
+GitHub webhook. GitHub Actions builds only the one image that still needs
+building (`config-agent`) and then tells Komodo to deploy, in that order, so an
+image is never pulled before it exists. Only the data stays on the machine, and
+each stack's secrets live in a `.env` beside its checkout rather than in GitHub.
 
 ## Architecture
 
@@ -30,6 +32,7 @@ flowchart LR
         HA[Home Assistant]
         GRAFANA[Grafana]
         PORTAINER[Portainer]
+        KOMODO[Komodo]
         REGISTRY[Docker registry]
         LIBRECHAT[LibreChat]
     end
@@ -38,6 +41,7 @@ flowchart LR
     CADDY --> HA
     CADDY --> GRAFANA
     CADDY --> PORTAINER
+    CADDY --> KOMODO
     CADDY --> REGISTRY
     CADDY --> LIBRECHAT
 
@@ -75,19 +79,20 @@ No inbound ports are open on the router: `cloudflared` maintains an
 outbound-only tunnel to Cloudflare, which routes `*.{domain}` hostnames to
 Caddy, which reverse-proxies to each service over a shared Docker bridge
 network (`internal`). TLS terminates at Cloudflare's edge. The tunnel runs
-in the host-managed portainer compose (the control plane CI deploys
-through), so no CI deploy can take it down.
+in its own host-managed compose, separate from every control plane, so no
+deploy — CI's or Komodo's — can take down the route used to repair it.
 
 ## Stacks
 
 | Stack | What it runs | Why |
 |---|---|---|
-| [config/](config/) | Caddy 2.8 + config-agent | Reverse proxy for every published service, plus the one container that flows repo config (HA yaml, mosquitto.conf, Caddyfile) to the live dirs and UI edits back to git |
-| [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML |
-| [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS) |
-| [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container |
-| [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. The one stack **not** deployed by CI: Komodo pulls it from this repo on a GitHub webhook |
-| [portainer/](portainer/) | Portainer CE + cloudflared | Control plane: management UI/API + the tunnel that exposes everything (host-managed, never CI-deployed) |
+| [config/](config/) | Caddy 2.8 + config-agent | Reverse proxy for every published service, plus the one container that copies repo config (HA yaml, mosquitto.conf) into the live dirs and pushes UI edits back to git. Deployed by Komodo; the only stack CI still touches, because `config-agent` is a built image |
+| [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML. Deployed by Komodo from this repo on a GitHub webhook, not by CI |
+| [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS). Deployed by Komodo from this repo on a GitHub webhook, not by CI; `ha-config/` and `mosquitto/` are synced separately by config-agent |
+| [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container. Deployed by Komodo from this repo on a GitHub webhook, not by CI; each service's config is bind-mounted from the checkout rather than baked into an image |
+| [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. Deployed by Komodo from this repo on a GitHub webhook, not by CI — the first stack to move |
+| [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
+| [portainer/](portainer/) | Portainer CE | Outgoing control plane, retained as the rollback target until the migration completes. Host-managed, never CI-deployed |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |
 | [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch, RAG parser + pgvector | Chat front-end over a Microsoft Foundry deployment. The second stack Komodo owns, and the first one with secrets |
 
@@ -116,20 +121,22 @@ Highlights:
 ## Repo layout
 
 ```
-├── .github/workflows/deploy.yml   change detection → image builds → stack deploys
-├── config/           docker-compose.yml, Caddyfile, deploy.env
+├── .github/workflows/deploy.yml   build config-agent → tell Komodo to deploy
+├── config/           docker-compose.yml, .env.example
+│   ├── caddy/        Caddyfile, mounted into Caddy straight from the checkout
 │   └── config-agent/ the one config container: repo → live sync + hourly UI-edit backup
-├── immich/           docker-compose.yml, deploy.env
+├── immich/           docker-compose.yml, .env.example
 ├── home-assistant/   docker-compose.yml, .env.example
 │   ├── ha-config/    HA yaml config (automations, scripts, scenes, ...)
 │   └── mosquitto/    mosquitto.conf (passwd file is generated, not committed)
-├── monitoring/       docker-compose.yml
-│   ├── prometheus/   Dockerfile, prometheus.yml, entrypoint (HA token via env)
-│   ├── promtail/     Dockerfile, promtail.yml
-│   ├── tempo/        Dockerfile, tempo.yml
-│   └── otelcol/      Dockerfile, otel-collector.yml
+├── monitoring/       docker-compose.yml, .env.example
+│   ├── prometheus/   prometheus.yml, entrypoint (HA token via env)
+│   ├── promtail/     promtail.yml
+│   ├── tempo/        tempo.yml
+│   └── otelcol/      otel-collector.yml
 ├── registry/         docker-compose.yml (deployed by Komodo, not CI)
-├── portainer/        docker-compose.yml (Portainer + cloudflared), .env.example
+├── tunnel/           docker-compose.yml (cloudflared), .env.example
+├── portainer/        docker-compose.yml (Portainer)
 ├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
 ├── librechat/        docker-compose.yml, librechat.yaml, .env.example (deployed by Komodo)
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
@@ -137,20 +144,23 @@ Highlights:
 
 Conventions:
 
-- **Config baked into images, state on disk.** Pure config
-  (Prometheus/OTel/Promtail/Tempo configs) is baked into thin images
-  (`FROM upstream` + `COPY config`) built by CI and published to GHCR, so a
-  stack needs nothing from the host but its volumes. Config that has to
-  live next to runtime state (HA yaml, mosquitto.conf) or hot-reload
-  (Caddyfile) ships inside the `config-agent` image instead and is synced
-  to the live dirs at deploy time. Stateful directories (photo library, HA
+- **Config mounted from the checkout, state on disk.** Komodo clones this repo
+  onto the server, so pure config (Prometheus/OTel/Promtail/Tempo, the
+  Caddyfile) is bind-mounted straight out of the checkout — nothing is built
+  and no container is recreated between an edit and the process reading it.
+  Always mount the *directory*, never the file: `git pull` replaces files, and
+  a single-file bind mount stays pinned to the original inode forever, serving
+  stale config while the host's checkout looks up to date. Config that has to
+  sit next to runtime state the app writes itself (HA yaml, mosquitto.conf) is
+  still *copied* in by `config-agent`. Stateful directories (photo library, HA
   runtime, Ollama models, databases) live under a data root (`/data` by
   default).
-- **Secrets never in git.** Runtime secrets are GitHub Actions secrets,
-  injected into each stack's environment at deploy time; committed
-  `deploy.env` files hold the non-secret variables. The one file-based
-  secret (Prometheus's HA token) is materialized at container start from an
-  env var by its entrypoint. A gitleaks pre-commit hook backstops it all.
+- **Secrets never in git.** Each stack's secrets live in a `.env` beside its
+  checkout on the server (`/etc/komodo/stacks/<stack>/<stack>/.env`, root-owned
+  `600`), placed once by hand and never transmitted. GitHub Actions holds only
+  what CI itself needs: `KOMODO_URL` and `KOMODO_WEBHOOK_SECRET`. The one
+  file-based secret (Prometheus's HA token) is materialized at container start
+  from an env var by its entrypoint. A gitleaks pre-commit hook backstops it.
 
 ## Rebuilding from scratch
 
@@ -158,20 +168,24 @@ Conventions:
    `/data`.
 2. Restore the data directories from backup (Immich library + DB, HA config,
    etc.) — or start fresh.
-3. Create the shared network and start the control plane (Portainer + the
-   tunnel): copy `portainer/.env.example` to `portainer/.env`, fill in the
-   tunnel token, then
-   `docker network create internal && docker compose --project-directory portainer up -d`.
-   Point the tunnel's public hostnames — `portainer.<domain>`,
-   `immich.<domain>`, `grafana.<domain>`, … — at `http://caddy:80`
-   (Portainer needs to be reachable by GitHub Actions).
-4. Set the repo's Actions secrets: `PORTAINER_URL`, `PORTAINER_API_TOKEN`
-   (Portainer → My account → Access tokens),
-   `GRAFANA_ADMIN_PASSWORD`, `HA_TOKEN`, `DB_PASSWORD`,
-   `HOMELAB_PUSH_TOKEN` (fine-grained PAT, contents read/write on this repo
-   only — lets config-agent push UI-made HA edits back).
-5. Run the **Deploy** workflow (workflow_dispatch) — it builds every image
-   and (re)creates every stack.
+3. Create the shared network, then start the tunnel and the control plane —
+   the tunnel first, since everything else is published through it. Copy
+   `tunnel/.env.example` to `tunnel/.env` and fill in the tunnel token, then
+   `docker network create internal && docker compose --project-directory tunnel up -d && docker compose --project-directory komodo up -d`.
+   Point the tunnel's public hostnames — `komodo.<domain>`, `immich.<domain>`,
+   `grafana.<domain>`, … — at `http://caddy:80`.
+4. Set the repo's Actions secrets: `KOMODO_URL` and `KOMODO_WEBHOOK_SECRET`
+   (the value of `KOMODO_WEBHOOK_SECRET` in `komodo/.env`). That is everything
+   CI needs — every other secret lives on the host now.
+5. In Komodo, create one Stack per directory in git mode: repo
+   `lorainemg/homelab`, branch `main`, `file_paths: ["<stack>/docker-compose.yml"]`,
+   and `project_name` **exactly** the directory name, so an existing server's
+   volumes (`<project>_<volume>`) are adopted rather than recreated empty. Copy
+   each stack's `.env.example` to
+   `/etc/komodo/stacks/<stack>/<stack>/.env`, fill it in, then deploy each
+   Stack. Add a GitHub webhook per stack pointing at
+   `<KOMODO_URL>/listener/github/stack/<name>/deploy` (secret:
+   `KOMODO_WEBHOOK_SECRET`) so later pushes redeploy it.
 6. Mosquitto users are the one manual step:
    `docker exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd homeassistant`
 7. LibreChat accounts are the other one. Registration is disabled on a
@@ -179,7 +193,7 @@ Conventions:
    `docker exec -it librechat npm run create-user` — there is never a window
    where the login page accepts signups.
 
-To run without Portainer/CI at all: copy each stack's `.env.example` to
+To run without Komodo/CI at all: copy each stack's `.env.example` to
 `.env`, fill it in, and run `./scripts/bootstrap.sh` — the compose files work
 standalone since the images are public.
 
@@ -199,39 +213,42 @@ cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
 ## CI/CD ([deploy.yml](.github/workflows/deploy.yml))
 
-Every push to `main` runs the pipeline on a GitHub-hosted runner:
+Most pushes to `main` never touch a runner. Komodo holds one GitHub webhook per
+stack; a push makes it pull this repo on the server and run `docker compose up
+-d` for that stack, so a config edit reaches the running container with no build
+and no image in between.
+
+CI exists for the one thing that still needs a runner — building `config-agent`
+— and is a single job:
 
 1. **Change detection** — [dorny/paths-filter](https://github.com/dorny/paths-filter)
-   maps the diff to the affected stacks and fans them out as a job matrix.
-   Untouched stacks aren't redeployed.
-2. **Image builds** — a second paths-filter decides, per image, whether its
-   config actually changed; only then does
+   checks `config/config-agent/**`. If it's untouched, every later step is
+   skipped and the run is green having done nothing.
+2. **Image build** —
    [docker/build-push-action](https://github.com/docker/build-push-action)
-   rebuild and push it to `ghcr.io/lorainemg/homelab/*` (tagged `latest` +
-   commit SHA for rollbacks). A Caddyfile tweak rebuilds one image, not five.
-3. **Stack deploys** —
-   [cssnr/portainer-stack-deploy-action](https://github.com/cssnr/portainer-stack-deploy-action)
-   updates the stack through the Portainer API (reached via the Cloudflare
-   Tunnel), passing the stack's committed `deploy.env` plus its secrets as
-   environment variables. Stacks stay fully editable in Portainer's UI.
+   rebuilds and pushes `ghcr.io/lorainemg/homelab/config-agent` (tagged
+   `latest` + commit SHA for rollbacks).
+3. **Deploy trigger** — a signed POST to Komodo's listener for the `config`
+   stack, in the same job and strictly after the build, so Komodo can never
+   pull an image GHCR doesn't have yet. The body must carry a `ref` matching
+   the stack's branch: Komodo filters on it and ignores a payload without one
+   while still answering `200`.
 
-`workflow_dispatch` deploys everything unconditionally — the
-fresh-server / changed-secrets button.
+`workflow_dispatch` rebuilds and redeploys unconditionally — the
+fresh-server / changed-agent button.
 
-Config that can't be baked into an app's own image flows through a single
-`config-agent` container in the config stack. CI bakes the HA yaml,
-`mosquitto.conf` and the `Caddyfile` into one image
-(`ghcr.io/lorainemg/homelab/config-agent`); at deploy time the agent copies
-the files that actually changed into the live dirs (keeping the previous
-version in `.sync-backup/` next to each), then the running services pick
-them up without being recreated: Caddy runs with `--watch` and hot-reloads
-its Caddyfile by itself, and Home Assistant is reloaded — or restarted, when
-`configuration.yaml` changed — through its API. Because no config push ever
-recreates the caddy container, a deploy can't sever the
-tunnel → caddy → Portainer path its own API response travels through (the
-only deploy still expected to lose its response is an edit to the config
-stack's compose file itself, e.g. a caddy version bump — rare and
-deliberate).
+Config that can't simply be mounted flows through the `config-agent` container
+in the config stack. HA yaml and `mosquitto.conf` are mounted read-only from
+Komodo's checkout at `/src` and copied into the live dirs (keeping the previous
+version in `.sync-backup/` next to each), because Home Assistant writes to those
+same directories itself; HA is then reloaded — or restarted, when
+`configuration.yaml` changed — through its API. The Caddyfile no longer goes
+through the agent at all: Caddy mounts `config/caddy/` from the checkout and
+`--watch` reloads it in place, so a Caddyfile edit never recreates the caddy
+container and can't sever the tunnel → caddy → Komodo path a deploy's own
+response travels through. Editing the config stack's compose file itself — a
+caddy version bump, say — does recreate it, and that one deploy is expected to
+lose its response.
 The flow is two-way: the same agent commits UI-made edits (automations,
 scripts, scenes, helpers) back to this repo once an hour with `[skip ci]`,
 so nothing is lost between deploys. Runtime state (`.storage/`, databases,

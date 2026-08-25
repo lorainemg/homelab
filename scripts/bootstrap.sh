@@ -9,9 +9,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# portainer first: it's the control plane (Portainer + the Cloudflare
-# tunnel) everything else is managed and published through.
-STACKS=(portainer registry config immich home-assistant monitoring librechat)
+# tunnel first: it's the only route in from outside, and everything else is
+# published through it.
+STACKS=(tunnel portainer registry config immich home-assistant monitoring librechat)
 
 # Shared bridge network that lets Caddy reach every stack by container name.
 docker network inspect internal >/dev/null 2>&1 || docker network create internal

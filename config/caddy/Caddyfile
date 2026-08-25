@@ -1,13 +1,12 @@
+# Served from Komodo's checkout, not baked into an image: edits here reach
+# Caddy through a git pull and --watch, with no build and no restart.
+
 http://immich.sussman.win {
     reverse_proxy immich-server:2283
 }
 
 http://portainer.sussman.win {
     reverse_proxy portainer:9000
-}
-
-http://netdata.sussman.win {
-    reverse_proxy netdata:19999
 }
 
 http://homeassistant.sussman.win {

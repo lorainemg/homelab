@@ -1,0 +1,21 @@
+# The Cloudflare tunnel — the only route into this network from outside.
+#
+# Host-managed like komodo/: brought up by hand with
+#   docker compose --project-directory tunnel up -d
+# and deliberately absent from .github/workflows/deploy.yml and from Komodo's
+# Stacks. Nothing that deploys automatically can reach it, because a bad
+# deploy of the stack holding the tunnel removes the path you would use to
+# repair it — including Komodo's own UI, which is published through it.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel run
+
+networks:
+  default:
+    name: internal
+    external: true # shared with the other stacks; created by scripts/bootstrap.sh
