@@ -121,6 +121,7 @@ Highlights:
 ## Repo layout
 
 ```
+├── .agents/skills/   agent-readable runbooks (adding-a-stack); .claude/skills symlinks here
 ├── .github/workflows/deploy.yml   build config-agent → tell Komodo to deploy
 ├── config/           docker-compose.yml, .env.example
 │   ├── caddy/        Caddyfile, mounted into Caddy straight from the checkout
@@ -202,6 +203,12 @@ Home Assistant's HACS custom components (`better_thermostat`, `browser_mod`,
 code doesn't belong in git.
 
 ## Contributing to it (a.k.a. me, later)
+
+Adding a new stack — or moving one between deploy methods — is written up in
+[.agents/skills/adding-a-stack/SKILL.md](.agents/skills/adding-a-stack/SKILL.md):
+a decision table for the four methods, a checklist per method, and the traps
+that have already caught us. It's in the cross-vendor `.agents/skills/` location
+so Codex and Copilot load it too; `.claude/skills` is a symlink to it.
 
 Enable the secret-scanning hook once per clone:
 
