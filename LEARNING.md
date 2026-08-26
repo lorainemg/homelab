@@ -205,6 +205,19 @@ start of a session; update when a concept lands or a new gap appears.
   database again.
 - Komodo Resource Sync: declare the Stacks as TOML in this repo instead of
   creating them by API call, so the control plane's own config is versioned.
+  Concrete motivation from 2026-08-25: settling "does `config` have
+  `webhook_force_deploy`?" needed an API call against a running Mongo, because
+  the only written record (the migration plan's `CreateStack` payload) had
+  drifted from reality. Two agents independently suspected a production bug over
+  it. With a `stacks.toml` in the repo it is a `grep`, and the record cannot
+  drift because it *is* the record. The trade: Komodo's Mongo becomes less
+  load-bearing for disaster recovery, but a wrong `project_name` in TOML empties
+  volumes exactly like a wrong one in an API call.
+- Lock down `registry.sussman.win`, or stop using it. Verified 2026-08-25:
+  `GET /v2/` answers 200 with no auth challenge and `/v2/_catalog` returns
+  `["alpine","app","traktv-tg-bot/bot"]` to anyone on the internet. Image names
+  are public and the images are pullable. Decide between putting it behind
+  Cloudflare Access, adding registry auth, or moving those images to GHCR.
 
 ## Open questions
 
