@@ -68,8 +68,8 @@ services:
       AZURE_BASE_URL: ${AZURE_BASE_URL}
       AZURE_API_KEY: ${AZURE_API_KEY}
       # rag_api parses .docx/.pdf/.xlsx into text. FULL_CONTEXT makes it inject
-      # the whole document rather than embed and vector-search it — a parser,
-      # not retrieval, which is why no embeddings provider is configured.
+      # the whole document rather than query vector results, but the RAG image
+      # still initializes an embeddings client at startup.
       RAG_API_URL: http://librechat-rag:8000
       RAG_USE_FULL_CONTEXT: "true"
     volumes:
@@ -131,6 +131,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       RAG_PORT: 8000
       JWT_SECRET: ${JWT_SECRET}
+      # The lite RAG image initializes OpenAI-compatible embeddings even in
+      # full-context mode. Reuse the Foundry v1 resource and its deployment.
+      RAG_OPENAI_API_KEY: ${AZURE_API_KEY}
+      RAG_OPENAI_BASEURL: ${AZURE_BASE_URL}
+      EMBEDDINGS_PROVIDER: openai
+      EMBEDDINGS_MODEL: text-embedding-3-small
     networks:
       - librechat
 

@@ -59,9 +59,10 @@ accepted-upload list
 the failure is silent rather than an error the user can act on. The `rag_api`
 container's `/text` endpoint is what parses Office and PDF formats. It is
 included here as a **document parser**, not as retrieval: `RAG_USE_FULL_CONTEXT`
-injects the whole parsed document into the prompt instead of embedding and
-vector-searching it. That also means no embeddings provider and no embeddings
-key.
+injects the whole parsed document into the prompt instead of querying vector
+results. The lite RAG image still initializes an embeddings client at startup,
+so this stack points it at the same Foundry v1 endpoint and key, using the
+`text-embedding-3-small` deployment.
 
 **Why `vectordb` is still present.** `rag_api` initialises a vector store at
 startup and will not boot without one, even when every request only ever hits
@@ -103,7 +104,7 @@ anyone will try when they get to document delivery.
 | Version | `ghcr.io/danny-avila/librechat:v0.8.7` | Upstream's compose runs `librechat-dev:latest`. This repo pins everything; `v0.8.7` is the newest published release tag |
 | Provider | Microsoft Foundry, as a `custom` endpoint on its **v1 API** | Already owned. The v1 surface is OpenAI-compatible, so the generic client fits it and there is no api-version to maintain; the built-in `azureOpenAI` endpoint builds the classic per-deployment URL instead |
 | Endpoint URL | Entirely in `${AZURE_BASE_URL}`, never a literal | The hostname identifies the Azure resource and this repo is public. `models.fetch` keeps the deployment names out too |
-| Document reading | `rag_api` + `vectordb`, `RAG_USE_FULL_CONTEXT=true` | The only way `.docx`/`.pdf` attachments parse at all. Full-context mode keeps it a parser, not a retrieval system — no embeddings provider, no embeddings key |
+| Document reading | `rag_api` + `vectordb`, `RAG_USE_FULL_CONTEXT=true` | The only way `.docx`/`.pdf` attachments parse at all. Full-context mode avoids retrieval queries, but the lite image still needs the Foundry embeddings deployment at startup |
 | Document authoring | Out of scope | No MCP server can return a file (see Concepts). Revisited below with the three real options |
 | Search | Meilisearch, included | Conversation search is core to the product; excluding it means `SEARCH=false` and a visibly degraded UI |
 | Admin panel | Excluded | Upstream ships it in the same compose; it is a second published surface and a second session secret for a single-user install |

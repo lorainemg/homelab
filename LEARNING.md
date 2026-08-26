@@ -174,6 +174,11 @@ start of a session; update when a concept lands or a new gap appears.
   inspect` returns; the `docker ps` accessor is `{{.Label "..."}}`. Worth
   remembering as the general shape: the same field name means different types
   in different docker subcommands. (2026-08-25)
+- **`RAG_USE_FULL_CONTEXT` does not remove RAG startup dependencies** — the
+  lite RAG image initializes `OpenAIEmbeddings` before serving requests even
+  when full-context mode avoids retrieval queries. The same Foundry v1 endpoint
+  and key work for it, provided the resource has an embedding deployment; this
+  resource exposes `text-embedding-3-small`. (2026-08-26)
 
 ## Shaky
 
