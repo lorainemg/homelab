@@ -1401,6 +1401,13 @@ Expected: the container gone, `portainer_data` still listed. Keep it for one mon
 
 Delete the `portainer.sussman.win` public hostname from the Cloudflare tunnel, and its block from `config/caddy/Caddyfile`. Push; Caddy hot-reloads it away with no recreation.
 
+The Caddyfile half is done (2026-08-25). The Cloudflare half is **still
+outstanding** — a token-run `cloudflared` fetches its ingress rules from the
+dashboard, so the hostname lives at Cloudflare and not in this repo. Delete it
+under Zero Trust → Networks → Tunnels → the tunnel → Public Hostnames. Until
+then `portainer.sussman.win` resolves and reaches Caddy, which no longer has a
+block for it.
+
 - [x] **Step 4: Delete the stack from the repo** *(repo)*
 
 ```bash
@@ -1423,7 +1430,7 @@ Remove the `portainer/` row from the stack table and the `portainer/` line from 
 
 Move the migration entry from *Next* to *Covered* with the date, and add whatever turned out to be shaky during execution.
 
-- [ ] **Step 7: Commit and merge** *(repo)*
+- [x] **Step 7: Commit and merge** *(repo)*
 
 ```bash
 git add -A

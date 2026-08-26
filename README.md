@@ -31,7 +31,6 @@ flowchart LR
         IMMICH[Immich photos]
         HA[Home Assistant]
         GRAFANA[Grafana]
-        PORTAINER[Portainer]
         KOMODO[Komodo]
         REGISTRY[Docker registry]
     end
@@ -39,7 +38,6 @@ flowchart LR
     CADDY --> IMMICH
     CADDY --> HA
     CADDY --> GRAFANA
-    CADDY --> PORTAINER
     CADDY --> KOMODO
     CADDY --> REGISTRY
 

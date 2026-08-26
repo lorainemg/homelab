@@ -1,13 +1,13 @@
 services:
   # cloudflared (the tunnel this stack is published through) deliberately
-  # lives in ../portainer/docker-compose.yml with the rest of the control
-  # plane, so redeploying this stack can't sever CI's path to Portainer.
+  # lives in ../tunnel/, host-managed and never deployed, so redeploying this
+  # stack can't sever the only route into the network.
 
   caddy:
     # Plain upstream image, pinned. The Caddyfile comes from Komodo's checkout
     # (./caddy below), not from a volume; --watch hot-reloads it in place.
     # A config push therefore never recreates this container — and never
-    # severs the tunnel -> caddy -> Portainer path that the deploy's own API
+    # severs the tunnel -> caddy -> Komodo path that the deploy's own API
     # response travels through. Only editing this file (or bumping the pin)
     # recreates it, and that one deploy is expected to lose its response.
     image: caddy:2.8.4
