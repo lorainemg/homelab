@@ -1,0 +1,113 @@
+# Komodo Resource Sync — the control plane's own configuration, in git.
+#
+# Declares the Stack objects Komodo holds in MongoDB: which repo and path each
+# one deploys, its compose project name, and its deploy behaviour. Without this
+# file that layer exists only in the database and cannot be grepped, reviewed
+# or rebuilt from the repo.
+#
+# Only non-default fields are declared. Komodo's sync diffs *declared* fields
+# against the live config and cannot see the rest, so anything omitted here is
+# left exactly as it is — not reset. That is deliberate:
+#
+#   - `environment` and `file_contents` are never declared here. They hold
+#     secrets and generated compose files; secrets stay out of git (see
+#     README "Secrets never in git"), and `trakt-tg-bot`'s compose file is
+#     written by that repo's own CI, which must keep owning it.
+#   - `branch = "main"`, `webhook_enabled = true`, `env_file_path = ".env"`
+#     and `auto_pull = true` are Komodo defaults and stay implicit.
+
+[[server]]
+name = "Local"
+[server.config]
+enabled = true
+
+##
+
+[[stack]]
+name = "config"
+[stack.config]
+server = "Local"
+project_name = "config"
+repo = "lorainemg/homelab"
+file_paths = ["config/docker-compose.yml"]
+# Caddy hot-reloads the Caddyfile from the checkout, but a compose edit still
+# has to land; force-deploy so a config-only push is never silently skipped.
+webhook_force_deploy = true
+
+##
+
+[[stack]]
+name = "docker-registry"
+[stack.config]
+server = "Local"
+project_name = "docker-registry"
+repo = "lorainemg/homelab"
+file_paths = ["registry/docker-compose.yml"]
+links = ["https://registry.sussman.win"]
+
+##
+
+[[stack]]
+name = "home-assistant"
+[stack.config]
+server = "Local"
+project_name = "home-assistant"
+repo = "lorainemg/homelab"
+file_paths = ["home-assistant/docker-compose.yml"]
+
+##
+
+[[stack]]
+name = "immich"
+[stack.config]
+server = "Local"
+project_name = "immich"
+repo = "lorainemg/homelab"
+file_paths = ["immich/docker-compose.yml"]
+
+##
+
+[[stack]]
+name = "librechat"
+[stack.config]
+server = "Local"
+project_name = "librechat"
+repo = "lorainemg/homelab"
+file_paths = ["librechat/docker-compose.yml"]
+# LibreChat reads its YAML once at boot, so a config-only commit needs both a
+# forced deploy and a restart, or the API keeps serving the old config.
+webhook_force_deploy = true
+post_deploy.command = """
+docker restart librechat
+"""
+post_deploy.shell_mode = false
+
+##
+
+[[stack]]
+name = "monitoring"
+[stack.config]
+server = "Local"
+project_name = "monitoring"
+repo = "lorainemg/homelab"
+file_paths = ["monitoring/docker-compose.yml"]
+# Same reason as librechat: these four read their config files at startup only.
+webhook_force_deploy = true
+post_deploy.command = """
+docker restart prometheus promtail tempo otel_collector
+"""
+post_deploy.shell_mode = false
+
+##
+
+# Shell only, on purpose. This Stack runs in `file_contents` mode and both its
+# compose file and its `environment` are written by the traktv-tg-bot repo's CI
+# through the Komodo API. Declaring either here would put a generated file and
+# five live secrets into git. Sync ignores fields it is not given, so this
+# block and that CI own disjoint fields and cannot clobber each other.
+[[stack]]
+name = "trakt-tg-bot"
+[stack.config]
+server = "Local"
+project_name = "trakt-tg-bot"
+webhook_enabled = false

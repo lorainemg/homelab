@@ -174,6 +174,17 @@ start of a session; update when a concept lands or a new gap appears.
   inspect` returns; the `docker ps` accessor is `{{.Label "..."}}`. Worth
   remembering as the general shape: the same field name means different types
   in different docker subcommands. (2026-08-25)
+- **Komodo's Resource Sync only sees the fields a TOML declares** — `get_diff`
+  diffs the declared *partial* against the full existing config
+  (`bin/core/src/sync/mod.rs:96` in v2.3.1), and the per-field comparison
+  `partial_derive2` generates yields a change only when the TOML side is
+  `Some`; an undeclared field matches `_ => None` and is left alone — not
+  reset to its default. So a `stacks.toml` can own the fields set by hand
+  (`project_name`, `file_paths`, `webhook_force_deploy`, `post_deploy`) while
+  `trakt-tg-bot`'s `file_contents` stays owned by the bot repo's CI. Two
+  writers on one resource is safe as long as they name disjoint fields, which
+  also means the migration can go one field at a time rather than all at once.
+  Read from Komodo v2.3.1 and the `partial_derive2` derive macro. (2026-08-25)
 
 ## Shaky
 
