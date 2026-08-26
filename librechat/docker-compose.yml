@@ -1,16 +1,16 @@
 # LibreChat — deployed by Komodo from this repo on a GitHub webhook, not by CI.
 #
 # Like registry/, this stack is deliberately absent from
-# .github/workflows/deploy.yml: if it ever appears there, Portainer and Komodo
-# are both driving the same compose project.
+# .github/workflows/deploy.yml: if it ever appears there, CI and Komodo would
+# both be driving the same compose project.
 #
 # Derived from https://github.com/danny-avila/LibreChat/blob/v0.8.7/docker-compose.yml
-# with every relative bind mount removed. Komodo runs compose from its own
+# with every relative state bind mount removed. Komodo runs compose from its own
 # clone of this repo, and Docker silently creates a *directory* for a missing
 # bind source — upstream's `./.env`, `./data-node` and `./uploads` mounts would
 # put live state inside a working copy that gets re-pulled on every deploy.
-# librechat.yaml below is the one relative bind that is correct, and it is the
-# reason this stack lives on Komodo at all.
+# The config directory below is the one relative bind that is correct, and it
+# is the reason this stack lives on Komodo at all.
 
 # Pinned here, not left to the directory or the Komodo resource name. The
 # project name prefixes every volume below; change it and compose stops
@@ -29,12 +29,15 @@ services:
     # No ports: published. Caddy reaches this over `internal`, so nothing on
     # the LAN can bypass the reverse proxy by hitting a host port.
     #
-    # Explicit environment instead of env_file: .env is gitignored, so it does
-    # not exist in Komodo's clone of this repo — the stack's env comes from the
-    # Komodo Stack resource. Same reasoning as immich/docker-compose.yml.
+    # Keep variables explicit so each service gets only what it needs. Compose
+    # interpolates these from the host-only .env; Komodo's merged config can
+    # therefore contain the values, which is a known secret-handling gap.
     environment:
       HOST: 0.0.0.0
       PORT: 3080
+      # LibreChat's config lives in a directory mount so a git pull can replace
+      # the file without pinning the container to its old inode.
+      CONFIG_PATH: /app/librechat-config/librechat.yaml
       MONGO_URI: mongodb://librechat-mongo:27017/LibreChat
       MEILI_HOST: http://librechat-meilisearch:7700
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
@@ -70,9 +73,10 @@ services:
       RAG_API_URL: http://librechat-rag:8000
       RAG_USE_FULL_CONTEXT: "true"
     volumes:
-      # Relative to this file, resolved inside Komodo's clone. Read-only: the
-      # repo is the source of truth and a re-pull would discard edits anyway.
-      - ./librechat.yaml:/app/librechat.yaml:ro
+      # Relative to this file, resolved inside Komodo's clone. Mount the
+      # directory, not the file: git replaces files during a pull, and a
+      # single-file bind mount stays pinned to the old inode.
+      - ./config:/app/librechat-config:ro
       - uploads:/app/uploads
       - images:/app/client/public/images
       - logs:/app/logs

@@ -42,8 +42,9 @@ proposing changes; update it *there* when the infrastructure changes, not here.
   control plane itself). Neither appears in `.github/workflows/deploy.yml` nor
   as a Komodo Stack. Every other stack is deployed by Komodo from this repo.
 - **Secrets never enter git.** `.env` files are gitignored; committed
-  `deploy.env` files hold only non-secret variables; real secrets are GitHub
-  Actions secrets. Enable the gitleaks hook once per clone:
+  `deploy.env` files hold only non-secret variables; real stack secrets live
+  in root-owned host `.env` files. GitHub Actions holds only the Komodo URL
+  and webhook secret. Enable the gitleaks hook once per clone:
   `cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`
 - **Verify before writing down a verdict.** When an experiment says "X doesn't
   work", read X's source and try an alternate config before recording it —

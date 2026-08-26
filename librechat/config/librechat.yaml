@@ -1,9 +1,11 @@
-# LibreChat application config, bind-mounted read-only at /app/librechat.yaml.
+# LibreChat application config, mounted read-only from the config directory at
+# /app/librechat-config/librechat.yaml.
 #
 # Unlike every other app config in this repo, this file is NOT baked into an
 # image and flowed through config-agent: Komodo already has this repo checked
-# out to run the compose file next to it, so the file is mounted straight from
-# the clone. Editing it is a commit — the webhook redeploys the stack.
+# out to run the compose file next to it, so its directory is mounted straight
+# from the clone. Editing it is a commit — the forced webhook pulls the change
+# and the post-deploy hook restarts the API.
 #
 # Schema reference: https://www.librechat.ai/docs/configuration/librechat_yaml
 
