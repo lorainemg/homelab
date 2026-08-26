@@ -85,7 +85,7 @@ Derived from upstream's compose with six deliberate departures, each listed in t
 
 `version: 1.3.13` (the `CONFIG_VERSION` v0.8.7 ships), one `custom` endpoint, and `fileConfig` limits. LibreChat reads it through `CONFIG_PATH=/app/librechat-config/librechat.yaml`.
 
-A `custom` endpoint rather than the built-in `azureOpenAI` one, because the resource is reached through its v1 (OpenAI-compatible) API. `azureOpenAI` would build `.../openai/deployments/<name>/chat/completions?api-version=<ver>` from an instance name — a different URL shape carrying an api-version that has to be maintained.
+A `custom` endpoint rather than the built-in `azureOpenAI` one, because the resource is reached through its v1 (OpenAI-compatible) API. `azureOpenAI` would build `.../openai/deployments/<name>/chat/completions?api-version=<ver>` from an instance name — a different URL shape carrying an api-version that has to be maintained. The same resource also supplies the RAG API's `text-embedding-3-small` deployment.
 
 Nothing identifying goes in the file: `baseURL` and `apiKey` are both `${...}` references resolved from the container environment, and `models.fetch` pulls the deployment list from `GET <baseURL>/models` so no deployment name is committed. `models.default` is still required by the schema (min 1 entry) — use a public model name as the placeholder. `titleModel: "current_model"` avoids a second hardcoded name.
 
@@ -172,7 +172,7 @@ the evaluation below.
 
 - [ ] **Step 3: Deploy, and watch the rag_api logs specifically**
 
-The api container comes up quickly; `librechat-rag` is the one that fails interestingly, because it will not boot without reaching pgvector. A `librechat-rag` restart loop means `POSTGRES_PASSWORD` disagrees between the two services.
+The api container comes up quickly; `librechat-rag` is the one that fails interestingly, because it initializes the Foundry embeddings client before serving `/text`. A `librechat-rag` restart loop means the embedding variables or `POSTGRES_PASSWORD` are wrong.
 
 **Verification:** all five containers running, and `docker exec config-caddy wget -qO- http://librechat:3080` returns HTML.
 
