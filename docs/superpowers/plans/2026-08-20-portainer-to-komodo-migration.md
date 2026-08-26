@@ -1374,7 +1374,7 @@ project name is `trakt-tg-bot` on both sides.
 - Consumes: nothing. Every stack is on Komodo by this point.
 - Produces: a repo with one control plane.
 
-- [ ] **Step 1: Confirm nothing is left on Portainer** *(host)*
+- [x] **Step 1: Confirm nothing is left on Portainer** *(host)*
 
 ```bash
 ssh home "docker ps --format '{{index .Labels \"com.docker.compose.project\"}}' | sort -u"
@@ -1388,7 +1388,7 @@ migrated, stop** — and check the *deploy path* as well as the container: a sta
 CI still calls the Portainer API breaks the moment Portainer stops, even though its
 containers keep running.
 
-- [ ] **Step 2: Stop Portainer but keep its data** *(host)*
+- [x] **Step 2: Stop Portainer but keep its data** *(host)*
 
 ```bash
 ssh home 'cd /home/lorainemg/homelab && docker compose --project-directory portainer down'
@@ -1401,7 +1401,7 @@ Expected: the container gone, `portainer_data` still listed. Keep it for one mon
 
 Delete the `portainer.sussman.win` public hostname from the Cloudflare tunnel, and its block from `config/caddy/Caddyfile`. Push; Caddy hot-reloads it away with no recreation.
 
-- [ ] **Step 4: Delete the stack from the repo** *(repo)*
+- [x] **Step 4: Delete the stack from the repo** *(repo)*
 
 ```bash
 git rm -r portainer/
@@ -1415,11 +1415,11 @@ STACKS=(tunnel komodo registry config immich home-assistant monitoring)
 
 Note `komodo` is now second: it is host-managed like `tunnel`, and bootstrap should bring the control plane up before the stacks it manages.
 
-- [ ] **Step 5: Update the README** *(repo)*
+- [x] **Step 5: Update the README** *(repo)*
 
 Remove the `portainer/` row from the stack table and the `portainer/` line from the repo layout. Rewrite the opening paragraph and the CI/CD section: pushing to `main` now builds one image and Komodo deploys from the repo on webhooks. Rewrite the "Rebuilding from scratch" steps — `PORTAINER_URL` / `PORTAINER_API_TOKEN` are gone, replaced by `KOMODO_URL` / `KOMODO_WEBHOOK_SECRET`, and the per-stack `.env` files (now including the folded-in `deploy.env` values) are placed both in the clone and in Komodo's checkouts.
 
-- [ ] **Step 6: Update `LEARNING.md`** *(repo)*
+- [x] **Step 6: Update `LEARNING.md`** *(repo)*
 
 Move the migration entry from *Next* to *Covered* with the date, and add whatever turned out to be shaky during execution.
 
