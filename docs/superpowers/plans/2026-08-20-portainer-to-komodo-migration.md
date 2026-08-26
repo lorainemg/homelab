@@ -1397,16 +1397,20 @@ docker volume ls --format '{{.Name}}' | grep portainer_data
 
 Expected: the container gone, `portainer_data` still listed. Keep it for one month — it is the only copy of Portainer's stack definitions if a rollback is ever needed.
 
-- [ ] **Step 3: Remove the hostname from the edge**
+- [x] **Step 3: Remove the hostname from the edge**
 
 Delete the `portainer.sussman.win` public hostname from the Cloudflare tunnel, and its block from `config/caddy/Caddyfile`. Push; Caddy hot-reloads it away with no recreation.
 
-The Caddyfile half is done (2026-08-25). The Cloudflare half is **still
-outstanding** — a token-run `cloudflared` fetches its ingress rules from the
-dashboard, so the hostname lives at Cloudflare and not in this repo. Delete it
-under Zero Trust → Networks → Tunnels → the tunnel → Public Hostnames. Until
-then `portainer.sussman.win` resolves and reaches Caddy, which no longer has a
-block for it.
+Both halves done 2026-08-25. Note the Cloudflare half is not a repo change: a
+token-run `cloudflared` fetches its ingress rules from the dashboard, so the
+hostname lives at Cloudflare and no grep of this repo will find it. Deleted
+under Zero Trust → Networks → Tunnels → the tunnel → Public Hostnames.
+
+Verified from outside: `portainer.sussman.win` returns 404 while
+`komodo.sussman.win` returns 200. The 404 is the load-bearing part — the live
+Caddy still had the `portainer:9000` block at that moment, so a request that
+reached Caddy would have returned 502 from the dead upstream. 404 means it never
+got past Cloudflare.
 
 - [x] **Step 4: Delete the stack from the repo** *(repo)*
 
