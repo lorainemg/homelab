@@ -10,8 +10,10 @@ services:
     volumes:
       - ${UPLOAD_LOCATION}:/data
       - /etc/localtime:/etc/localtime:ro
-    # Explicit environment instead of env_file: .env is gitignored, so it
-    # doesn't exist in Portainer's clone of this repo; stack env vars do.
+    # Explicit environment instead of env_file: names each variable this
+    # service actually needs, so a missing one fails loudly rather than
+    # starting with a blank password. Values come from the root-owned .env
+    # placed beside Komodo's checkout, never from git.
     environment:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_USERNAME: ${DB_USERNAME}

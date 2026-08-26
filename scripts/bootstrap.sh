@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# Bring up the whole homelab on a fresh machine.
+# Bring up the two host-managed stacks on a fresh machine: the tunnel and the
+# control plane. Everything else is a Komodo Stack that Komodo deploys from
+# this repo — see README, "Rebuilding from scratch", steps 4-6.
 #
 # Prerequisites:
 #   - Docker Engine + Compose plugin installed
 #   - A data disk mounted at $DATA_ROOT (default /data) holding service state
-#   - Each stack's .env created from its .env.example
+#   - tunnel/.env and komodo/.env created from their .env.example files
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# tunnel first: it's the only route in from outside, and everything else is
-# published through it.
-STACKS=(tunnel portainer registry config immich home-assistant monitoring)
+# Only the two host-managed stacks. Everything else is a Komodo Stack and is
+# deployed by Komodo from this repo, so bootstrap's job is to make Komodo
+# exist: tunnel first (the only route in from outside), komodo second.
+STACKS=(tunnel komodo)
 
 # Shared bridge network that lets Caddy reach every stack by container name.
 docker network inspect internal >/dev/null 2>&1 || docker network create internal
@@ -32,4 +35,5 @@ for stack in "${STACKS[@]}"; do
   docker compose --project-directory "$stack" up -d
 done
 
-echo "All stacks up. Point your Cloudflare tunnel at caddy:80 and you're done."
+echo "Tunnel and Komodo are up. Finish in Komodo: create a Stack per directory"
+echo "(or restore Komodo's Mongo from backup), then deploy each one."

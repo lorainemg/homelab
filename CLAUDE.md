@@ -35,12 +35,12 @@ proposing changes; update it *there* when the infrastructure changes, not here.
   commit to main as a production deploy — no "just committing this to save it".
 - **The server is remote.** Docker/compose commands run from this repo touch
   *this machine*, not the homelab. To act on the real thing, go through the
-  Komodo or Portainer API (see the `komodo-api-access` memory) or SSH.
-- **Two control planes are host-managed and never CI-deployed:**
-  `portainer/` (holds the Cloudflare tunnel — a bad CI deploy could sever
-  the path CI itself deploys through) and `komodo/`. `registry/` is deployed
-  by Komodo on a GitHub webhook, not by CI, which is why it's absent from the
-  deploy matrix.
+  Komodo API (see the `komodo-api-access` memory) or SSH.
+- **Two stacks are host-managed and never deployed:** `tunnel/` (holds the
+  Cloudflare tunnel — a bad deploy of the stack holding the tunnel would sever
+  the path used to repair it, Komodo's own UI included) and `komodo/` (the
+  control plane itself). Neither appears in `.github/workflows/deploy.yml` nor
+  as a Komodo Stack. Every other stack is deployed by Komodo from this repo.
 - **Secrets never enter git.** `.env` files are gitignored; committed
   `deploy.env` files hold only non-secret variables; real secrets are GitHub
   Actions secrets. Enable the gitleaks hook once per clone:

@@ -1,0 +1,45 @@
+{
+  "skill_name": "adding-a-stack",
+  "evals": [
+    {
+      "id": 0,
+      "name": "adds-new-stack-default-path",
+      "prompt": "I want to add Paperless-ngx to the homelab. It needs Postgres and a data directory. Set up whatever's needed so it deploys like everything else.",
+      "expected_output": "Chooses method 1 (Komodo git Stack). Names project_name equal to the directory name and explains why. Commits .env.example, never .env. Places the real .env at /etc/komodo/stacks/paperless/paperless/.env. Creates a GitHub webhook as a separate step. Does not add anything to deploy.yml.",
+      "files": [],
+      "assertions": [
+        "Chooses a Komodo git Stack rather than adding the stack to .github/workflows/deploy.yml",
+        "Sets project_name equal to the repo directory name AND explains that a mismatch creates fresh empty volumes",
+        "Commits .env.example only, and places the real .env on the host under /etc/komodo/stacks/",
+        "Treats creating the GitHub webhook as its own step, separate from webhook_enabled on the Stack",
+        "Does not modify .github/workflows/deploy.yml"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "diagnoses-missing-webhook",
+      "prompt": "I added a bookstack stack last week and it's running fine. I pushed a change to its compose file this morning and nothing happened on the server. CI was green. What's wrong?",
+      "expected_output": "Identifies the missing GitHub webhook as the leading cause - webhook_enabled on the Komodo Stack opens the listener but GitHub still needs its own webhook per stack. Does not conclude CI is broken.",
+      "files": [],
+      "assertions": [
+        "Names the missing GitHub-side webhook as the leading diagnosis",
+        "Distinguishes webhook_enabled on the Komodo Stack from the webhook GitHub must send",
+        "Does not blame CI, the paths-filter, or a build failure as the primary cause",
+        "Gives a concrete command or API call that would confirm the diagnosis"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "refuses-tunnel-onto-komodo",
+      "prompt": "Let's move the cloudflared tunnel into Komodo so it's managed like everything else. It's annoying that it's the only thing I have to bring up by hand.",
+      "expected_output": "Declines and explains the blast-radius reason: anything deployable can be broken by a deploy, and the tunnel is the only route in - including to Komodo's own UI, which is published through it. Identifies this as method 4 (host-managed, never deployed).",
+      "files": [],
+      "assertions": [
+        "Declines to move the tunnel onto Komodo rather than carrying out the request",
+        "Gives the blast-radius reason: a bad deploy of the stack holding the tunnel removes the path used to repair it",
+        "Notes that Komodo's own UI is reached through the tunnel, so the failure is self-locking",
+        "Identifies this as the host-managed / never-deployed category rather than an oversight"
+      ]
+    }
+  ]
+}

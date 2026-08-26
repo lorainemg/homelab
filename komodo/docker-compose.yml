@@ -1,6 +1,7 @@
-# Komodo — second control plane, under evaluation alongside Portainer.
+# Komodo — the control plane. Deploys every stack in this repo from the repo
+# itself, on a GitHub webhook per stack.
 #
-# Host-managed like portainer/: brought up by hand with
+# Host-managed like tunnel/: brought up by hand with
 #   docker compose --project-directory komodo up -d
 # and deliberately absent from .github/workflows/deploy.yml, so no CI deploy
 # can break the thing performing deploys.
