@@ -104,6 +104,22 @@ start of a session; update when a concept lands or a new gap appears.
   URL) rather than anything mentioning secrets. Worth knowing which exit code
   means what: curl 3 is a bad URL, 6 is DNS, 7 is connection refused, 22 is an
   HTTP error status under `-f`. (2026-08-23)
+- **LibreChat's first Komodo shape was only partly valid** — the pinned
+  `librechat` project name, named volumes, and no-CI deployment were sound, but
+  a single-file bind mount freezes at the inode present when the container
+  starts. LibreChat supports `CONFIG_PATH`, so its YAML now lives under a
+  checkout-mounted directory. Its Stack also needs
+  `webhook_force_deploy: true` and `post_deploy: docker restart librechat`:
+  otherwise a commit can pull the changed YAML without restarting the API.
+  The secret values follow the rest of the repo into the checkout `.env`, not
+  Komodo's Environment field. (2026-08-25)
+- **A host `.env` is not enough if Compose interpolates it** — Komodo runs and
+  logs `docker compose config` before `up`; values written as `${SECRET}` in
+  `environment:` therefore appear in the merged config unless Komodo knows how
+  to redact them. `env_file:` does not solve this: Compose expands those values
+  into the same normalized config output. LibreChat therefore keeps the
+  narrower explicit environment mapping, but its secret delivery remains an
+  open design issue before production. (2026-08-25)
 
 - **A generated volume name is a landmine under a green deploy** — Aspire
   derives the bot's Postgres volume from an apphost hash, and an unpinned
@@ -163,6 +179,11 @@ start of a session; update when a concept lands or a new gap appears.
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
   untouched so far; it is the obvious next capability after this migration.
+- LibreChat's production acceptance run — the stack has not yet been deployed
+  and its volume backup/restore and public-hostname tests remain open.
+- LibreChat secret delivery — the host `.env` avoids Git and Komodo's
+  Environment page, but Compose expands it into Komodo's normalized config log;
+  a secret-aware runtime path is still needed before public deployment.
 - Restoring Komodo's Mongo — now *run* (2026-08-20) and it works, but the
   procedure as originally written tested the wrong thing: it copied from the
   live database instead of opening a backup file. A test that cannot fail is

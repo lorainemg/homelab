@@ -20,3 +20,7 @@ http://grafana.sussman.win {
 http://komodo.sussman.win {
     reverse_proxy komodo-core:9120
 }
+
+http://librechat.sussman.win {
+    reverse_proxy librechat:3080
+}

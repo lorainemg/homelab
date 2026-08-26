@@ -1,0 +1,166 @@
+# LibreChat — deployed by Komodo from this repo on a GitHub webhook, not by CI.
+#
+# Like registry/, this stack is deliberately absent from
+# .github/workflows/deploy.yml: if it ever appears there, CI and Komodo would
+# both be driving the same compose project.
+#
+# Derived from https://github.com/danny-avila/LibreChat/blob/v0.8.7/docker-compose.yml
+# with every relative state bind mount removed. Komodo runs compose from its own
+# clone of this repo, and Docker silently creates a *directory* for a missing
+# bind source — upstream's `./.env`, `./data-node` and `./uploads` mounts would
+# put live state inside a working copy that gets re-pulled on every deploy.
+# The config directory below is the one relative bind that is correct, and it
+# is the reason this stack lives on Komodo at all.
+
+# Pinned here, not left to the directory or the Komodo resource name. The
+# project name prefixes every volume below; change it and compose stops
+# recognising the existing volumes, silently creates empty ones, and LibreChat
+# comes up perfectly healthy with no conversation history.
+name: librechat
+
+services:
+  api:
+    image: ghcr.io/danny-avila/librechat:v0.8.7
+    container_name: librechat
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+      - rag_api
+    # No ports: published. Caddy reaches this over `internal`, so nothing on
+    # the LAN can bypass the reverse proxy by hitting a host port.
+    #
+    # Keep variables explicit so each service gets only what it needs. Compose
+    # interpolates these from the host-only .env; Komodo's merged config can
+    # therefore contain the values, which is a known secret-handling gap.
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3080
+      # LibreChat's config lives in a directory mount so a git pull can replace
+      # the file without pinning the container to its old inode.
+      CONFIG_PATH: /app/librechat-config/librechat.yaml
+      MONGO_URI: mongodb://librechat-mongo:27017/LibreChat
+      MEILI_HOST: http://librechat-meilisearch:7700
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+      SEARCH: "true"
+      # Behind Caddy behind the tunnel: without this every request looks like
+      # it comes from the proxy and the rate limiter treats all users as one.
+      TRUST_PROXY: 1
+      DOMAIN_CLIENT: ${DOMAIN_CLIENT}
+      DOMAIN_SERVER: ${DOMAIN_SERVER}
+      # Published to the internet; nothing here should end up in a search index.
+      NO_INDEX: "true"
+      # Accounts are created with `npm run create-user` (see the README), so
+      # there is never an open-signup window on a public hostname.
+      ALLOW_REGISTRATION: "false"
+      ALLOW_EMAIL_LOGIN: "true"
+      ALLOW_PASSWORD_RESET: "false"
+      # Encrypts user-held credentials at rest. Rotating these invalidates
+      # every stored credential and every active session.
+      CREDS_KEY: ${CREDS_KEY}
+      CREDS_IV: ${CREDS_IV}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      # Microsoft Foundry. librechat.yaml refers back to both of these by name
+      # and every ${...} in that file is resolved against this environment, so
+      # anything it references has to be passed here too. The full endpoint URL
+      # is a variable rather than a literal on purpose: it identifies the Azure
+      # resource, and this repo is public.
+      AZURE_BASE_URL: ${AZURE_BASE_URL}
+      AZURE_API_KEY: ${AZURE_API_KEY}
+      # rag_api parses .docx/.pdf/.xlsx into text. FULL_CONTEXT makes it inject
+      # the whole document rather than embed and vector-search it — a parser,
+      # not retrieval, which is why no embeddings provider is configured.
+      RAG_API_URL: http://librechat-rag:8000
+      RAG_USE_FULL_CONTEXT: "true"
+    volumes:
+      # Relative to this file, resolved inside Komodo's clone. Mount the
+      # directory, not the file: git replaces files during a pull, and a
+      # single-file bind mount stays pinned to the old inode.
+      - ./config:/app/librechat-config:ro
+      - uploads:/app/uploads
+      - images:/app/client/public/images
+      - logs:/app/logs
+      - data:/app/data
+    networks:
+      # `librechat` for its own datastores; `internal` only so Caddy can
+      # resolve this container by name. Nothing else joins `internal`.
+      - librechat
+      - internal
+
+  mongodb:
+    image: mongo:8.0.20
+    container_name: librechat-mongo
+    restart: unless-stopped
+    # Reachable only from the private network below, which is what makes
+    # --noauth acceptable here (it is what upstream ships).
+    command: mongod --noauth
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - librechat
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.35.1
+    container_name: librechat-meilisearch
+    restart: unless-stopped
+    environment:
+      MEILI_HOST: http://librechat-meilisearch:7700
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+    volumes:
+      - meili-data:/meili_data
+    networks:
+      - librechat
+
+  # Document parser, not a retrieval system. LibreChat's native fallback is a
+  # plain readFileAsString, which hands the model the raw bytes of a .docx zip
+  # — and .docx/.pdf are accepted uploads either way, so without this container
+  # the failure is silent rather than an error.
+  rag_api:
+    # This image publishes only :latest, so it is pinned by digest instead.
+    image: ghcr.io/danny-avila/librechat-rag-api-dev-lite@sha256:f9f34c8ed6884b0ff9b17387e6174fed737dba29f21622ecb75604d82bc47bf8
+    container_name: librechat-rag
+    restart: unless-stopped
+    depends_on:
+      - vectordb
+    environment:
+      DB_HOST: librechat-vectordb
+      DB_PORT: 5432
+      POSTGRES_DB: librechat_vectors
+      POSTGRES_USER: librechat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      RAG_PORT: 8000
+      JWT_SECRET: ${JWT_SECRET}
+    networks:
+      - librechat
+
+  # A dependency of rag_api, not a feature: rag_api initialises a vector store
+  # at startup and will not boot without one, even though every request here
+  # only ever hits its /text parsing endpoint.
+  vectordb:
+    image: pgvector/pgvector:0.8.0-pg15-trixie
+    container_name: librechat-vectordb
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: librechat_vectors
+      POSTGRES_USER: librechat
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - librechat
+
+volumes:
+  mongo-data:
+  meili-data:
+  pgdata:
+  uploads:
+  images:
+  logs:
+  data:
+
+networks:
+  librechat:
+    name: librechat
+  internal:
+    external: true # shared with the other stacks; created by scripts/bootstrap.sh

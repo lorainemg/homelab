@@ -1,6 +1,6 @@
 # 🏠 Homelab
 
-Infrastructure-as-code for my single-node homelab: ~25 containers across five
+Infrastructure-as-code for my single-node homelab: ~30 containers across six
 Docker Compose stacks (plus a self-deploying app stack), published to the
 internet through a Cloudflare Tunnel and fully observable with a
 Grafana/Prometheus/Loki/Tempo stack.
@@ -12,6 +12,9 @@ GitHub webhook. GitHub Actions builds only the one image that still needs
 building (`config-agent`) and then tells Komodo to deploy, in that order, so an
 image is never pulled before it exists. Only the data stays on the machine, and
 each stack's secrets live in a `.env` beside its checkout rather than in GitHub.
+For stacks that interpolate those values into Compose, Komodo's normalized
+config log can still contain them; LibreChat's secret delivery is not yet
+closed out.
 
 ## Architecture
 
@@ -33,6 +36,7 @@ flowchart LR
         GRAFANA[Grafana]
         KOMODO[Komodo]
         REGISTRY[Docker registry]
+        LIBRECHAT[LibreChat]
     end
 
     CADDY --> IMMICH
@@ -40,6 +44,7 @@ flowchart LR
     CADDY --> GRAFANA
     CADDY --> KOMODO
     CADDY --> REGISTRY
+    CADDY --> LIBRECHAT
 
     subgraph voice[Local voice & AI]
         WHISPER[Whisper STT]
@@ -89,6 +94,7 @@ deploy — CI's or Komodo's — can take down the route used to repair it.
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. Deployed by Komodo from this repo on a GitHub webhook, not by CI — the first stack to move |
 | [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | The control plane: clones this repo on the server and deploys every stack above from it. Host-managed, never CI-deployed |
+| [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch, RAG parser + pgvector | Chat front-end over a Microsoft Foundry deployment. A Komodo-owned stack with checkout-mounted config; secret delivery remains under evaluation |
 
 One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
@@ -136,6 +142,7 @@ Highlights:
 ├── registry/         docker-compose.yml (deployed by Komodo, not CI)
 ├── tunnel/           docker-compose.yml (cloudflared), .env.example
 ├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
+├── librechat/        docker-compose.yml, config/librechat.yaml, .env.example (deployed by Komodo)
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```
 
@@ -177,14 +184,25 @@ Conventions:
 5. In Komodo, create one Stack per directory in git mode: repo
    `lorainemg/homelab`, branch `main`, `file_paths: ["<stack>/docker-compose.yml"]`,
    and `project_name` **exactly** the directory name, so an existing server's
-   volumes (`<project>_<volume>`) are adopted rather than recreated empty. Copy
-   each stack's `.env.example` to
-   `/etc/komodo/stacks/<stack>/<stack>/.env`, fill it in, then deploy each
-   Stack. Add a GitHub webhook per stack pointing at
+   volumes (`<project>_<volume>`) are adopted rather than recreated empty. If a
+   Stack is new and its checkout does not exist yet, create the Stack first,
+   then clone the repo to `/etc/komodo/stacks/<stack>`. Copy each stack's
+   `.env.example` to `/etc/komodo/stacks/<stack>/<stack>/.env`, fill it in,
+   then deploy each Stack. Add a GitHub webhook per stack pointing at
    `<KOMODO_URL>/listener/github/stack/<name>/deploy` (secret:
    `KOMODO_WEBHOOK_SECRET`) so later pushes redeploy it.
+   For stacks whose process does not hot-reload configuration mounted beside
+   the compose file, also set `webhook_force_deploy: true` and restart the
+   affected service in `post_deploy`; otherwise Komodo can pull a config edit
+   without the process rereading it. This trades selective deploys for
+   correctness: every push to the Stack's branch runs the hook. LibreChat uses
+   `docker restart librechat`; Caddy is the hot-reload exception.
 6. Mosquitto users are the one manual step:
    `docker exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd homeassistant`
+7. LibreChat accounts are the other one. Registration is disabled on a
+   public hostname, so the first account is made from the host with
+   `docker exec -it librechat npm run create-user` — there is never a window
+   where the login page accepts signups.
 
 `./scripts/bootstrap.sh` automates step 3 and stops there: it creates the
 shared network, refuses to start if `tunnel/.env` or `komodo/.env` is missing,
@@ -193,6 +211,10 @@ so steps 4-6 are what finish the rebuild. If you need a stack up with no
 control plane at all — Komodo itself broken, say — its compose file still runs
 standalone: `docker compose --project-directory <stack> up -d`, with that
 stack's `.env` beside it.
+
+LibreChat's `config/` directory is mounted from the Komodo checkout and
+`CONFIG_PATH` points at its YAML file. A config-only commit therefore needs the
+forced webhook and post-deploy restart described above.
 
 Home Assistant's HACS custom components (`better_thermostat`, `browser_mod`,
 `extended_openai_conversation`, `hacs`, `monitor_docker`, `roborock_custom_map`,
