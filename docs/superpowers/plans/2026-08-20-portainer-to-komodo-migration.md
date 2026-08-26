@@ -1222,7 +1222,7 @@ and the bot then appears in Komodo beside every other stack.
 - Consumes: a Komodo service user + API key, and the Aspire-generated compose file.
 - Produces: a Komodo Stack named `trakt-tg-bot` with `project_name: trakt-tg-bot`.
 
-- [ ] **Step 1: Capture the baseline** *(host)*
+- [x] **Step 1: Capture the baseline** *(host)*
 
 ```bash
 ssh home 'docker ps --filter label=com.docker.compose.project=trakt-tg-bot --format "{{.Names}}\t{{.Status}}"
@@ -1232,7 +1232,7 @@ docker volume ls --format "{{.Name}}" | grep trakt'
 Expected three containers (`bot`, `trakt-db`, `aspire`) and the named volume
 `trakt-tg-bot_apphost-<hash>-postgres-data`. **Write the volume name down exactly.**
 
-- [ ] **Step 2: Create a service user and API key** *(API)*
+- [x] **Step 2: Create a service user and API key** *(API)*
 
 CI cannot log in as the admin. Komodo supports non-interactive callers via a service
 user with a key/secret pair, sent as `X-Api-Key` and `X-Api-Secret` headers instead of
@@ -1252,7 +1252,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 The response carries the key and the secret. The secret is shown **once**. Put both in
 the bot repo as `KOMODO_API_KEY` and `KOMODO_API_SECRET`, plus `KOMODO_URL`.
 
-- [ ] **Step 3: Create the Stack in `file_contents` mode** *(API)*
+- [x] **Step 3: Create the Stack in `file_contents` mode** *(API)*
 
 `file_contents` starts empty; CI fills it on every deploy. `project_name` must match the
 existing volume prefix exactly — this stack's Postgres is a *named* volume, so a wrong
@@ -1279,7 +1279,7 @@ curl -s -X POST https://komodo.sussman.win/write -H "Authorization: Bearer $JWT"
 No webhook: this stack is not driven by pushes to this repo. Its own CI calls Komodo
 directly.
 
-- [ ] **Step 4: Replace the deploy step in the bot's repo** *(other repo)*
+- [x] **Step 4: Replace the deploy step in the bot's repo** *(other repo)*
 
 In `deploy-main.yml`, the final step is currently `cssnr/portainer-stack-deploy-action@v1`
 with `PORTAINER_URL` / `PORTAINER_API_TOKEN`, `endpoint: 3`, `name: trakt-tg-bot`.
@@ -1314,7 +1314,7 @@ a silent pass. Note `/execute` is asynchronous: a 2xx means *accepted*, not *dep
 To make the job's result meaningful, poll `/read` `GetUpdate` until `status: Complete`
 and fail on `success: false`.
 
-- [ ] **Step 5: Delete the Portainer stack, keeping the volume**
+- [x] **Step 5: Delete the Portainer stack, keeping the volume**
 
 Portainer → Stacks → `trakt-tg-bot` → Remove, leaving volumes. Then:
 
@@ -1324,7 +1324,7 @@ ssh home 'docker volume ls --format "{{.Name}}" | grep trakt'
 
 Expected: the volume from Step 1, unchanged. **If it is gone, stop.**
 
-- [ ] **Step 6: Run the bot's CI and verify** *(other repo)*
+- [x] **Step 6: Run the bot's CI and verify** *(other repo)*
 
 Trigger the workflow. Then:
 
@@ -1337,7 +1337,15 @@ Expected: the three containers back, and the **same** volume name — not a new 
 volume name means `project_name` or the Aspire-generated volume key changed, and the bot
 is running on an empty database.
 
-- [ ] **Step 7: Note the seam in the README** *(repo)*
+**This fired for real (2026-08-25).** `project_name` was right, but the workflow installs
+the Aspire CLI unpinned, and the new version derived a different apphost hash:
+`apphost-e7f9f553c0` → `apphost-48ef807faa`. Three healthy containers, empty database,
+green CI. Recovered by stopping the stack and cloning the old volume's bytes into the
+new one, then verifying by *querying* (128 watch_statuses). The durable fix is naming
+the volume explicitly in the AppHost (`WithDataVolume`) so the hash stops mattering —
+open follow-up in the bot repo. Until then the old volume stays on disk as a backup.
+
+- [x] **Step 7: Note the seam in the README** *(repo)*
 
 The README paragraph about `trakt-tg-bot` says it "deploys itself from its own repo's CI
 via the Portainer API — the same pattern this repo uses". Both halves are now wrong.
@@ -1366,7 +1374,7 @@ project name is `trakt-tg-bot` on both sides.
 - Consumes: nothing. Every stack is on Komodo by this point.
 - Produces: a repo with one control plane.
 
-- [ ] **Step 1: Confirm nothing is left on Portainer** *(host)*
+- [x] **Step 1: Confirm nothing is left on Portainer** *(host)*
 
 ```bash
 ssh home "docker ps --format '{{index .Labels \"com.docker.compose.project\"}}' | sort -u"
@@ -1380,7 +1388,7 @@ migrated, stop** — and check the *deploy path* as well as the container: a sta
 CI still calls the Portainer API breaks the moment Portainer stops, even though its
 containers keep running.
 
-- [ ] **Step 2: Stop Portainer but keep its data** *(host)*
+- [x] **Step 2: Stop Portainer but keep its data** *(host)*
 
 ```bash
 ssh home 'cd /home/lorainemg/homelab && docker compose --project-directory portainer down'
@@ -1389,11 +1397,22 @@ docker volume ls --format '{{.Name}}' | grep portainer_data
 
 Expected: the container gone, `portainer_data` still listed. Keep it for one month — it is the only copy of Portainer's stack definitions if a rollback is ever needed.
 
-- [ ] **Step 3: Remove the hostname from the edge**
+- [x] **Step 3: Remove the hostname from the edge**
 
 Delete the `portainer.sussman.win` public hostname from the Cloudflare tunnel, and its block from `config/caddy/Caddyfile`. Push; Caddy hot-reloads it away with no recreation.
 
-- [ ] **Step 4: Delete the stack from the repo** *(repo)*
+Both halves done 2026-08-25. Note the Cloudflare half is not a repo change: a
+token-run `cloudflared` fetches its ingress rules from the dashboard, so the
+hostname lives at Cloudflare and no grep of this repo will find it. Deleted
+under Zero Trust → Networks → Tunnels → the tunnel → Public Hostnames.
+
+Verified from outside: `portainer.sussman.win` returns 404 while
+`komodo.sussman.win` returns 200. The 404 is the load-bearing part — the live
+Caddy still had the `portainer:9000` block at that moment, so a request that
+reached Caddy would have returned 502 from the dead upstream. 404 means it never
+got past Cloudflare.
+
+- [x] **Step 4: Delete the stack from the repo** *(repo)*
 
 ```bash
 git rm -r portainer/
@@ -1407,15 +1426,15 @@ STACKS=(tunnel komodo registry config immich home-assistant monitoring)
 
 Note `komodo` is now second: it is host-managed like `tunnel`, and bootstrap should bring the control plane up before the stacks it manages.
 
-- [ ] **Step 5: Update the README** *(repo)*
+- [x] **Step 5: Update the README** *(repo)*
 
 Remove the `portainer/` row from the stack table and the `portainer/` line from the repo layout. Rewrite the opening paragraph and the CI/CD section: pushing to `main` now builds one image and Komodo deploys from the repo on webhooks. Rewrite the "Rebuilding from scratch" steps — `PORTAINER_URL` / `PORTAINER_API_TOKEN` are gone, replaced by `KOMODO_URL` / `KOMODO_WEBHOOK_SECRET`, and the per-stack `.env` files (now including the folded-in `deploy.env` values) are placed both in the clone and in Komodo's checkouts.
 
-- [ ] **Step 6: Update `LEARNING.md`** *(repo)*
+- [x] **Step 6: Update `LEARNING.md`** *(repo)*
 
 Move the migration entry from *Next* to *Covered* with the date, and add whatever turned out to be shaky during execution.
 
-- [ ] **Step 7: Commit and merge** *(repo)*
+- [x] **Step 7: Commit and merge** *(repo)*
 
 ```bash
 git add -A

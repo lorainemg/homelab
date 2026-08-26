@@ -105,6 +105,60 @@ start of a session; update when a concept lands or a new gap appears.
   means what: curl 3 is a bad URL, 6 is DNS, 7 is connection refused, 22 is an
   HTTP error status under `-f`. (2026-08-23)
 
+- **A generated volume name is a landmine under a green deploy** — Aspire
+  derives the bot's Postgres volume from an apphost hash, and an unpinned
+  `curl | bash` CLI install meant a new Aspire version changed it:
+  `apphost-e7f9f553c0` → `apphost-48ef807faa`. Compose doesn't warn — it
+  creates the unknown name empty, Postgres initialises a blank database, and
+  every container reports healthy. Caught only because the migration plan's
+  gate demanded the *same volume name*, not healthy containers; recovered by
+  cloning the old volume's bytes into the new name and proving it with a row
+  count (128 watch_statuses). Durable fix: name the volume explicitly in the
+  AppHost (`WithDataVolume`). (2026-08-25)
+- **`[skip ci]` survives a squash merge** — GitHub's default squash message
+  pastes in every branch commit's subject, and honors the tag *anywhere* in
+  the message. A `[skip ci]` written for a direct-push plan silently cancelled
+  the deploy when the plan changed to a PR. If a branch commit carries the tag,
+  edit the squash message before merging. (2026-08-25)
+- **Verdict on `komodo_client` (npm) for CI: works, not worth it** — the
+  client pulls in `mogh_auth_client`, which reads `localStorage` at import
+  time; in Node that needs `--experimental-webstorage --localstorage-file`
+  (Node 22; newer Node needs only the file flag — verified on real Node 22 in
+  Docker after wrongly "verifying" on local Node 26). A pin plus two runtime
+  flags to adopt a typed client lost to 30 lines of curl+jq. Both variants
+  push compose + env in one `UpdateStack` and poll `GetUpdate`, because
+  `/execute`'s 2xx means accepted, not deployed. (2026-08-25)
+
+- **`docker compose down` keeps named volumes; `-v` is what takes them** — one
+  character is the whole difference between "Portainer stays reversible for a
+  month" and "Portainer's stack definitions are gone". `down` removes the
+  containers and the network it created and deliberately stops there, treating
+  a named volume as data you meant to keep. (2026-08-25)
+- **A token-run `cloudflared` keeps its routing table at Cloudflare** — given
+  only `TUNNEL_TOKEN` and `tunnel run` there is no `config.yml` anywhere: the
+  ingress rules are fetched from the dashboard at connect time. So "which
+  hostname reaches which container" is not greppable in this repo, and retiring
+  a hostname is a click in Zero Trust → Networks → Tunnels → Public Hostnames
+  rather than a commit. The other shape — a mounted `config.yml` with `ingress:`
+  rules — would put that mapping back under git, at the cost of a redeploy per
+  hostname change. (2026-08-25)
+- **Prose about infrastructure drifts silently, and confident prose drifts
+  longest** — three instances in one session. `CLAUDE.md` still said
+  `portainer/` held the tunnel, two days after Task 2 moved it to `tunnel/`.
+  `bootstrap.sh`'s `STACKS` list had never gained `trakt-tg-bot`, quietly
+  voiding its "rebuild the whole machine" promise — which is what settled the
+  decision to shrink it to `(tunnel komodo)` rather than maintain it. And the
+  README's `bootstrap.sh` paragraph went false *during* this session, from an
+  edit made twenty minutes earlier. None of it has a compiler or a test. The
+  habit that catches the third kind: after changing what a script does, grep
+  the docs for the script's name. (2026-08-25)
+- **`docker ps --format` hands you `.Labels` as one comma-joined string** — so
+  `{{index .Labels "com.docker.compose.project"}}` dies with `cannot index
+  slice/array with type string`. `index` needs a map, which is what `docker
+  inspect` returns; the `docker ps` accessor is `{{.Label "..."}}`. Worth
+  remembering as the general shape: the same field name means different types
+  in different docker subcommands. (2026-08-25)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
@@ -113,15 +167,21 @@ start of a session; update when a concept lands or a new gap appears.
   procedure as originally written tested the wrong thing: it copied from the
   live database instead of opening a backup file. A test that cannot fail is
   not a test.
+- A plan written days before it runs is prose too, and rots the same way.
+  Task 9's own commands carried two bugs — a `{{index .Labels ...}}` template
+  that cannot work against `docker ps`, and a volume check missing `ssh home`
+  so it silently inspected the laptop and would have read as "the data is
+  gone" — and its delete list named `portainer/.env.example`, removed back in
+  Task 2. Read each step against reality before running it, not after.
 
 ## Next
 
-- Finish [the migration](docs/superpowers/plans/2026-08-20-portainer-to-komodo-migration.md):
-  Tasks 1-7 are done (registry, tunnel, monitoring, immich, home-assistant and
-  config are all on Komodo, and CI is down to one build job). Task 8 moves
-  `trakt-tg-bot` — which deploys itself from another repo through Portainer's
-  API — onto a Komodo Stack in `file_contents` mode; Task 9 then retires
-  Portainer.
+- Delete `portainer_data` on or after **2026-09-25** — it is the only surviving
+  copy of Portainer's stack definitions, kept one month as the migration's last
+  undo. `ssh home 'docker volume rm portainer_data'`.
+- In the bot repo: pin the Aspire volume name (`WithDataVolume`) and the Aspire
+  CLI version, so a CLI update can never re-point the stack at an empty
+  database again.
 - Komodo Resource Sync: declare the Stacks as TOML in this repo instead of
   creating them by API call, so the control plane's own config is versioned.
 

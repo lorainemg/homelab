@@ -31,7 +31,6 @@ flowchart LR
         IMMICH[Immich photos]
         HA[Home Assistant]
         GRAFANA[Grafana]
-        PORTAINER[Portainer]
         KOMODO[Komodo]
         REGISTRY[Docker registry]
         LIBRECHAT[LibreChat]
@@ -40,7 +39,6 @@ flowchart LR
     CADDY --> IMMICH
     CADDY --> HA
     CADDY --> GRAFANA
-    CADDY --> PORTAINER
     CADDY --> KOMODO
     CADDY --> REGISTRY
     CADDY --> LIBRECHAT
@@ -92,17 +90,20 @@ deploy — CI's or Komodo's — can take down the route used to repair it.
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container. Deployed by Komodo from this repo on a GitHub webhook, not by CI; each service's config is bind-mounted from the checkout rather than baked into an image |
 | [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. Deployed by Komodo from this repo on a GitHub webhook, not by CI — the first stack to move |
 | [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
-| [portainer/](portainer/) | Portainer CE | Outgoing control plane, retained as the rollback target until the migration completes. Host-managed, never CI-deployed |
-| [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | Second control plane, **under evaluation** against Portainer until 2026-08-20. Host-managed, never CI-deployed. Owns the `docker-registry` stack |
-| [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch, RAG parser + pgvector | Chat front-end over a Microsoft Foundry deployment. The second stack Komodo owns, and the first one with secrets |
+| [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | The control plane: clones this repo on the server and deploys every stack above from it. Host-managed, never CI-deployed |
+| [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch, RAG parser + pgvector | Chat front-end over a Microsoft Foundry deployment. A Komodo-owned stack with checkout-mounted config; secret delivery remains under evaluation |
 
 One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
 for Trakt.tv + Postgres 17 + Aspire dashboard) generates its compose file
-with .NET Aspire and deploys itself from its own repo's CI via the Portainer
-API — the same pattern this repo uses for the infrastructure stacks. This
+with .NET Aspire and deploys itself from its own repo's CI through the Komodo
+API: a `trakt-tg-bot` Stack in `file_contents` mode, filled and deployed by CI
+with a service-user key that has Write on that one stack and nothing else. This
 repo only documents the seam (the monitoring stack joins its network to
-collect telemetry).
+collect telemetry). One sharp edge to know: Aspire derives the Postgres volume
+name from an apphost hash, so an Aspire CLI update can silently point the stack
+at a fresh empty volume — the old data survives under the previous name, and
+the fix is naming the volume explicitly in the AppHost.
 
 Highlights:
 
@@ -121,6 +122,7 @@ Highlights:
 ## Repo layout
 
 ```
+├── .agents/skills/   agent-readable runbooks (adding-a-stack); .claude/skills symlinks here
 ├── .github/workflows/deploy.yml   build config-agent → tell Komodo to deploy
 ├── config/           docker-compose.yml, .env.example
 │   ├── caddy/        Caddyfile, mounted into Caddy straight from the checkout
@@ -136,7 +138,6 @@ Highlights:
 │   └── otelcol/      otel-collector.yml
 ├── registry/         docker-compose.yml (deployed by Komodo, not CI)
 ├── tunnel/           docker-compose.yml (cloudflared), .env.example
-├── portainer/        docker-compose.yml (Portainer)
 ├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
 ├── librechat/        docker-compose.yml, librechat.yaml, .env.example (deployed by Komodo)
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
@@ -193,9 +194,13 @@ Conventions:
    `docker exec -it librechat npm run create-user` — there is never a window
    where the login page accepts signups.
 
-To run without Komodo/CI at all: copy each stack's `.env.example` to
-`.env`, fill it in, and run `./scripts/bootstrap.sh` — the compose files work
-standalone since the images are public.
+`./scripts/bootstrap.sh` automates step 3 and stops there: it creates the
+shared network, refuses to start if `tunnel/.env` or `komodo/.env` is missing,
+and brings up those two stacks. Everything past that point is a Komodo Stack,
+so steps 4-6 are what finish the rebuild. If you need a stack up with no
+control plane at all — Komodo itself broken, say — its compose file still runs
+standalone: `docker compose --project-directory <stack> up -d`, with that
+stack's `.env` beside it.
 
 Home Assistant's HACS custom components (`better_thermostat`, `browser_mod`,
 `extended_openai_conversation`, `hacs`, `monitor_docker`, `roborock_custom_map`,
@@ -204,6 +209,12 @@ Home Assistant's HACS custom components (`better_thermostat`, `browser_mod`,
 code doesn't belong in git.
 
 ## Contributing to it (a.k.a. me, later)
+
+Adding a new stack — or moving one between deploy methods — is written up in
+[.agents/skills/adding-a-stack/SKILL.md](.agents/skills/adding-a-stack/SKILL.md):
+a decision table for the four methods, a checklist per method, and the traps
+that have already caught us. It's in the cross-vendor `.agents/skills/` location
+so Codex and Copilot load it too; `.claude/skills` is a symlink to it.
 
 Enable the secret-scanning hook once per clone:
 
