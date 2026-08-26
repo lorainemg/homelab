@@ -101,9 +101,12 @@ One more stack runs on the server but is deliberately **not** defined here:
 for Trakt.tv + Postgres 17 + Aspire dashboard) generates its compose file
 with .NET Aspire and deploys itself from its own repo's CI through the Komodo
 API: a `trakt-tg-bot` Stack in `file_contents` mode, filled and deployed by CI
-with a service-user key that has Write on that one stack and nothing else. This
-repo only documents the seam (the monitoring stack joins its network to
-collect telemetry). One sharp edge to know: Aspire derives the Postgres volume
+with a service-user key that has Write on that one stack and nothing else —
+which is why the empty Stack shell itself is seeded by `scripts/bootstrap.sh`
+(the narrow key cannot create stacks, and no sync TOML may declare this one:
+sync resets any field it doesn't declare, and this Stack's contents are CI's).
+Beyond that seam this repo only documents it (the monitoring stack joins its
+network to collect telemetry). One sharp edge to know: Aspire derives the Postgres volume
 name from an apphost hash, so an Aspire CLI update can silently point the stack
 at a fresh empty volume — the old data survives under the previous name, and
 the fix is naming the volume explicitly in the AppHost.
@@ -181,22 +184,20 @@ Conventions:
 4. Set the repo's Actions secrets: `KOMODO_URL` and `KOMODO_WEBHOOK_SECRET`
    (the value of `KOMODO_WEBHOOK_SECRET` in `komodo/.env`). That is everything
    CI needs — every other secret lives on the host now.
-5. In Komodo, create one Stack per directory in git mode: repo
-   `lorainemg/homelab`, branch `main`, `file_paths: ["<stack>/docker-compose.yml"]`,
-   and `project_name` **exactly** the directory name, so an existing server's
-   volumes (`<project>_<volume>`) are adopted rather than recreated empty. If a
-   Stack is new and its checkout does not exist yet, create the Stack first,
-   then clone the repo to `/etc/komodo/stacks/<stack>`. Copy each stack's
-   `.env.example` to `/etc/komodo/stacks/<stack>/<stack>/.env`, fill it in,
-   then deploy each Stack. Add a GitHub webhook per stack pointing at
-   `<KOMODO_URL>/listener/github/stack/<name>/deploy` (secret:
-   `KOMODO_WEBHOOK_SECRET`) so later pushes redeploy it.
-   For stacks whose process does not hot-reload configuration mounted beside
-   the compose file, also set `webhook_force_deploy: true` and restart the
-   affected service in `post_deploy`; otherwise Komodo can pull a config edit
-   without the process rereading it. This trades selective deploys for
-   correctness: every push to the Stack's branch runs the hook. LibreChat uses
-   `docker restart librechat`; Caddy is the hot-reload exception.
+5. The Stacks themselves need no clicking: bootstrap pointed Komodo at
+   [komodo/stacks.toml](komodo/stacks.toml) (a ResourceSync) and ran the first
+   sync, which creates every Stack with its `project_name` **exactly** the
+   directory name — so an existing server's volumes (`<project>_<volume>`) are
+   adopted rather than recreated empty — plus the empty `trakt-tg-bot` shell
+   its own repo's CI fills. Per-stack deploy behaviour
+   (`webhook_force_deploy`, `post_deploy` restarts for processes that don't
+   hot-reload their config) lives in that file too. What remains by hand:
+   copy each stack's `.env.example` to
+   `/etc/komodo/stacks/<stack>/<stack>/.env` and fill it in, deploy each
+   Stack, and add the GitHub webhooks — one per stack at
+   `<KOMODO_URL>/listener/github/stack/<name>/deploy`, plus one at
+   `<KOMODO_URL>/listener/github/sync/homelab/sync` so a push that edits
+   `stacks.toml` applies itself (secret for all: `KOMODO_WEBHOOK_SECRET`).
 6. Mosquitto users are the one manual step:
    `docker exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd homeassistant`
 7. LibreChat accounts are the other one. Registration is disabled on a
@@ -204,10 +205,12 @@ Conventions:
    `docker exec -it librechat npm run create-user` — there is never a window
    where the login page accepts signups.
 
-`./scripts/bootstrap.sh` automates step 3 and stops there: it creates the
+`./scripts/bootstrap.sh` automates steps 3 and 5's Komodo half: it creates the
 shared network, refuses to start if `tunnel/.env` or `komodo/.env` is missing,
-and brings up those two stacks. Everything past that point is a Komodo Stack,
-so steps 4-6 are what finish the rebuild. If you need a stack up with no
+brings up those two stacks, then seeds the control plane — the ResourceSync
+pointing at `komodo/stacks.toml` (running the first sync, which creates every
+Stack) and the empty `trakt-tg-bot` shell. Steps 4-6's remaining hand work
+(`.env` files, webhooks, Mosquitto users) finishes the rebuild. If you need a stack up with no
 control plane at all — Komodo itself broken, say — its compose file still runs
 standalone: `docker compose --project-directory <stack> up -d`, with that
 stack's `.env` beside it.

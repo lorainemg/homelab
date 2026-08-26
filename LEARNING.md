@@ -179,17 +179,21 @@ start of a session; update when a concept lands or a new gap appears.
   when full-context mode avoids retrieval queries. The same Foundry v1 endpoint
   and key work for it, provided the resource has an embedding deployment; this
   resource exposes `text-embedding-3-small`. (2026-08-26)
-- **Komodo's Resource Sync only sees the fields a TOML declares** — `get_diff`
-  diffs the declared *partial* against the full existing config
-  (`bin/core/src/sync/mod.rs:96` in v2.3.1), and the per-field comparison
-  `partial_derive2` generates yields a change only when the TOML side is
-  `Some`; an undeclared field matches `_ => None` and is left alone — not
-  reset to its default. So a `stacks.toml` can own the fields set by hand
-  (`project_name`, `file_paths`, `webhook_force_deploy`, `post_deploy`) while
-  `trakt-tg-bot`'s `file_contents` stays owned by the bot repo's CI. Two
-  writers on one resource is safe as long as they name disjoint fields, which
-  also means the migration can go one field at a time rather than all at once.
-  Read from Komodo v2.3.1 and the `partial_derive2` derive macro. (2026-08-25)
+- **Resource Sync declares whole resources, not fields — and reading the
+  callee isn't reading the caller** — the first verdict recorded here tonight
+  said sync only sees declared fields, read straight from `partial_derive2`'s
+  diff (`None` on the TOML side → no change). The derive does work that way;
+  Komodo's sync neutralizes it first: `sync/view.rs` converts the TOML partial
+  into a *full* config and back, materializing every undeclared field as
+  `Some(default)` — its own comment says "Makes sure things that aren't
+  defined in toml ... actually get removed". So a declared resource must
+  declare every non-default field or lose it; only *undeclared resources* are
+  safe (with `delete: false`). Caught before it wiped `trakt-tg-bot`'s
+  CI-written `file_contents` and secrets, because the pending diff was read
+  on the live server before `RunSync` — the diff-review gate did its job the
+  first time it existed. The bot stack's answer: its shell is seeded by
+  `bootstrap.sh`, its contents stay owned by the bot repo's CI, and no TOML
+  ever names it. (2026-08-25)
 
 ## Shaky
 

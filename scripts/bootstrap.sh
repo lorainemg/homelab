@@ -88,12 +88,34 @@ seed_resource_sync() {
   echo "    created; first sync started (async — watch it in the Komodo UI)"
 }
 
+# The one stack no TOML can declare: trakt-tg-bot runs in file_contents mode
+# and both its compose file and its environment (secrets included) are written
+# by the traktv-tg-bot repo's CI, holding a key with Write on this one stack
+# and nothing else. Declaring it in stacks.toml would reset those fields on
+# every sync, and CI's narrow key cannot create stacks — so bootstrap creates
+# the empty shell and CI fills it on its next deploy. Safe to re-run.
+seed_bot_stack() {
+  echo "==> seeding the trakt-tg-bot stack shell"
+  if api /read '{"type":"GetStack","params":{"stack":"trakt-tg-bot"}}' "$JWT" | grep -q '"name":"trakt-tg-bot"'; then
+    echo "    already exists — skipping"
+    return 0
+  fi
+  local server_id
+  server_id=$(api /read '{"type":"GetServer","params":{"server":"Local"}}' "$JWT" | grep -oP '"\$oid":"\K[^"]*' | head -1)
+  [[ -n "$server_id" ]] || { echo "!! could not resolve the Local server id." >&2; exit 1; }
+  api /write "{\"type\":\"CreateStack\",\"params\":{\"name\":\"trakt-tg-bot\",\"config\":{
+    \"server_id\":\"$server_id\",\"project_name\":\"trakt-tg-bot\",\"webhook_enabled\":false}}}" "$JWT" \
+    | grep -q '"name":"trakt-tg-bot"' || { echo "!! CreateStack trakt-tg-bot failed." >&2; exit 1; }
+  echo "    created (empty — the bot repo's next CI deploy fills it)"
+}
+
 main() {
   check_env_files
   create_networks
   start_stacks
   wait_for_core
   seed_resource_sync
+  seed_bot_stack
 
   echo "Tunnel and Komodo are up; komodo/stacks.toml declares the Stacks."
   echo "Still manual: each stack's .env on the host, and the GitHub webhooks"

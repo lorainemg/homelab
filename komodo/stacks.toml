@@ -9,10 +9,17 @@
 # against the live config and cannot see the rest, so anything omitted here is
 # left exactly as it is — not reset. That is deliberate:
 #
-#   - `environment` and `file_contents` are never declared here. They hold
-#     secrets and generated compose files; secrets stay out of git (see
-#     README "Secrets never in git"), and `trakt-tg-bot`'s compose file is
-#     written by that repo's own CI, which must keep owning it.
+#   - A resource DECLARED here must declare every one of its non-default
+#     fields: sync merges the declared fields onto a *default* config and
+#     applies the result, so an undeclared field on a declared resource is
+#     reset, not preserved (bin/core/src/sync/view.rs in komodo v2.3.1,
+#     "Makes sure things that aren't defined in toml ... actually get
+#     removed"). Resources NOT declared at all are untouched while
+#     `delete: false`.
+#   - Which is why `trakt-tg-bot` is absent: its `file_contents` and
+#     `environment` (secrets included) are written by that repo's own CI,
+#     and any declaration here would wipe them on every sync. Its empty
+#     shell is created by scripts/bootstrap.sh instead.
 #   - `branch = "main"`, `webhook_enabled = true`, `env_file_path = ".env"`
 #     and `auto_pull = true` are Komodo defaults and stay implicit.
 
@@ -97,17 +104,3 @@ post_deploy.command = """
 docker restart prometheus promtail tempo otel_collector
 """
 post_deploy.shell_mode = false
-
-##
-
-# Shell only, on purpose. This Stack runs in `file_contents` mode and both its
-# compose file and its `environment` are written by the traktv-tg-bot repo's CI
-# through the Komodo API. Declaring either here would put a generated file and
-# five live secrets into git. Sync ignores fields it is not given, so this
-# block and that CI own disjoint fields and cannot clobber each other.
-[[stack]]
-name = "trakt-tg-bot"
-[stack.config]
-server = "Local"
-project_name = "trakt-tg-bot"
-webhook_enabled = false
