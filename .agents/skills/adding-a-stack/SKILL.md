@@ -117,6 +117,14 @@ Examples: `tunnel`, `komodo`.
   self-reloads before adding one. Note that self-reload can be defeated by a
   *single-file* bind mount (the inode trap): mount the directory and it works.
 
+  The two live stacks that mount config are the worked example, verified
+  2026-08-25 against Komodo's API:
+
+  | stack | `webhook_force_deploy` | `post_deploy` | why |
+  |---|---|---|---|
+  | `config` | true | *none* | Caddy runs `--watch` and reloads itself |
+  | `monitoring` | true | `docker restart prometheus promtail tempo otel_collector` | none of those four watch their config |
+
 ## Common mistakes
 
 | Symptom | Cause |
