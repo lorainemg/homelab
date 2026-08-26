@@ -40,6 +40,46 @@
         "Notes that Komodo's own UI is reached through the tunnel, so the failure is self-locking",
         "Identifies this as the host-managed / never-deployed category rather than an oversight"
       ]
+    },
+    {
+      "id": 3,
+      "name": "mounts-config-from-checkout",
+      "prompt": "Add Uptime Kuma, with its config mounted from the repo so I can edit the check definitions in git.",
+      "expected_output": "See assertions.",
+      "files": [],
+      "assertions": [
+        "Sets webhook_force_deploy: true and explains the default check only compares the compose file",
+        "Adds a post_deploy command restarting the affected service, because compose leaves unchanged services alone",
+        "Mounts the directory, not a single file",
+        "Warns that getting this wrong fails silently - the stack deploys and stays healthy while edits never arrive"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "built-image-ordering",
+      "prompt": "I wrote a small Go service in this repo that has to be built into an image before it can run. Get it deploying.",
+      "expected_output": "See assertions.",
+      "files": [],
+      "assertions": [
+        "Builds and triggers the deploy in the SAME CI job, strictly ordered",
+        "Explains the race: a separate deploy path can land the previous :latest and report success",
+        "Tags with both :latest and the commit SHA",
+        "Uses a positive paths-filter glob rather than a negated !pattern"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "foreign-repo-deploy",
+      "prompt": "My side project lives in its own repo with its own CI. I want it deployed on the homelab without its compose file living in this repo.",
+      "expected_output": "See assertions.",
+      "files": [],
+      "assertions": [
+        "Reaches for a file_contents Stack rather than vendoring the compose file into this repo",
+        "Creates a Komodo service user scoped to that one stack, not an admin key",
+        "Pins project_name to the live project name",
+        "Notes that /execute returning 2xx means accepted, not deployed - poll to confirm"
+      ]
     }
-  ]
+  ],
+  "notes": "Iteration 1 (evals 0-2) and iteration 2 (evals 3-5) both came out non-discriminating on correctness - the controls passed too, because this repo documents the answers. The measured benefit is cost: -21% to -25% tokens and up to -52% tool calls. Eval 3's post_deploy assertion is too broad and needs rewriting: a service that watches its own config (Caddy, Gatus) must NOT get a restart."
 }

@@ -48,8 +48,9 @@ Examples in this repo: `immich`, `home-assistant`, `monitoring`, `registry`.
 5. **README** — add a row to the stack table and a line to the repo layout.
 
 If the stack bind-mounts config out of the checkout, also set
-`webhook_force_deploy: true` and a `post_deploy` command restarting the affected
-services. See **Config mounted from the checkout** below.
+`webhook_force_deploy: true`, and add a `post_deploy` restart *only if the
+service does not watch its own config*. See **Config mounted from the checkout**
+below.
 
 ## Method 2 — Komodo git Stack + CI build
 
@@ -104,11 +105,17 @@ Examples: `tunnel`, `komodo`.
   the version present when the container started.
 - **Secrets never enter git.** `.env` on the host only. GitHub Actions holds
   just `KOMODO_URL` and `KOMODO_WEBHOOK_SECRET`.
-- **Config mounted from the checkout needs two extra settings**, or edits
-  silently do nothing: `webhook_force_deploy: true` (the default check compares
-  only the compose file's contents and ignores everything mounted beside it),
-  and a `post_deploy` command restarting the affected services (`docker compose
-  up` leaves a container alone when its service definition has not changed).
+- **Config mounted from the checkout always needs `webhook_force_deploy:
+  true`**, or edits silently do nothing — the default check compares only the
+  compose file's contents and ignores everything mounted beside it.
+- **It needs a `post_deploy` restart too, *unless the service watches its own
+  config*.** `docker compose up` leaves a container alone when its service
+  definition has not changed, so most services need the nudge. But Caddy runs
+  with `--watch` and reloads in place, and a restart there would recreate the
+  proxy and sever the response path the deploy is travelling on — which is the
+  whole property the `config` stack is built around. Check whether the service
+  self-reloads before adding one. Note that self-reload can be defeated by a
+  *single-file* bind mount (the inode trap): mount the directory and it works.
 
 ## Common mistakes
 
