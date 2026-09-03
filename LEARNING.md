@@ -191,9 +191,23 @@ start of a session; update when a concept lands or a new gap appears.
   safe (with `delete: false`). Caught before it wiped `trakt-tg-bot`'s
   CI-written `file_contents` and secrets, because the pending diff was read
   on the live server before `RunSync` — the diff-review gate did its job the
-  first time it existed. The bot stack's answer: its shell is seeded by
-  `bootstrap.sh`, its contents stay owned by the bot repo's CI, and no TOML
-  ever names it. (2026-08-25)
+  first time it existed. The bot stack's answer: its shell was seeded by
+  `bootstrap.sh` (until 2026-09-02 — see the next entry), its contents stay
+  owned by the bot repo's CI, and no TOML ever names it. (2026-08-25)
+- **Non-admin Komodo users can create Stacks — the README said they couldn't.**
+  Komodo's rule is one line, `user.admin || !core_config().disable_non_admin_create`
+  (`resource/stack.rs`, v2.3.1), and that flag is unset here. What creation
+  *does* need is Read **plus the specific `Attach` permission on the target
+  server** — Read alone fails with "Cannot attach Stack to this Server" — and
+  the creator is then granted Write on the new resource automatically.
+  Verified end to end as the `trakt-tg-bot-ci` service user with a throwaway
+  stack that was never deployed (volume count 72 before and after). The
+  recorded "narrow key cannot create stacks" verdict had never been tried —
+  the floci mistake again — and it had shaped both `bootstrap.sh` and the
+  README. The bot's CI now creates its own Stack if missing; bootstrap no
+  longer seeds it. One more wrinkle: `GetStack` on a missing name answers
+  HTTP 500 with "Did not find any Stack", not a 404, so the CI branches on
+  the body. (2026-09-02)
 
 ## Shaky
 

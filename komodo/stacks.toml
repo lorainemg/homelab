@@ -18,8 +18,8 @@
 #     `delete: false`.
 #   - Which is why `trakt-tg-bot` is absent: its `file_contents` and
 #     `environment` (secrets included) are written by that repo's own CI,
-#     and any declaration here would wipe them on every sync. Its empty
-#     shell is created by scripts/bootstrap.sh instead.
+#     and any declaration here would wipe them on every sync. That CI also
+#     creates the Stack itself on its first run (see the README).
 #   - `branch = "main"`, `webhook_enabled = true`, `env_file_path = ".env"`
 #     and `auto_pull = true` are Komodo defaults and stay implicit.
 
