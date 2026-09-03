@@ -22,6 +22,12 @@
 #     creates the Stack itself on its first run (see the README).
 #   - `branch = "main"`, `webhook_enabled = true`, `env_file_path = ".env"`
 #     and `auto_pull = true` are Komodo defaults and stay implicit.
+#   - `links` is what the Komodo UI shows as clickable URLs on the stack. Each
+#     lists the public hostname first (Cloudflare tunnel -> Caddy -> container;
+#     the hostname table lives in the tunnel's dashboard config, not here), then
+#     the LAN address for every port the compose file publishes on the host
+#     (the server is 172.20.3.194). No link means nothing is reachable from
+#     outside its own Docker network.
 
 [[server]]
 name = "Local"
@@ -50,7 +56,7 @@ server = "Local"
 project_name = "docker-registry"
 repo = "lorainemg/homelab"
 file_paths = ["registry/docker-compose.yml"]
-links = ["https://registry.sussman.win"]
+links = ["https://registry.sussman.win", "http://172.20.3.194:5000"]
 
 ##
 
@@ -61,6 +67,7 @@ server = "Local"
 project_name = "home-assistant"
 repo = "lorainemg/homelab"
 file_paths = ["home-assistant/docker-compose.yml"]
+links = ["https://homeassistant.sussman.win", "http://172.20.3.194:8123"]
 
 ##
 
@@ -71,6 +78,7 @@ server = "Local"
 project_name = "immich"
 repo = "lorainemg/homelab"
 file_paths = ["immich/docker-compose.yml"]
+links = ["https://immich.sussman.win", "http://172.20.3.194:2283"]
 
 ##
 
@@ -81,6 +89,7 @@ server = "Local"
 project_name = "librechat"
 repo = "lorainemg/homelab"
 file_paths = ["librechat/docker-compose.yml"]
+links = ["https://librechat.sussman.win"]
 # LibreChat reads its YAML once at boot, so a config-only commit needs both a
 # forced deploy and a restart, or the API keeps serving the old config.
 webhook_force_deploy = true
@@ -98,6 +107,13 @@ server = "Local"
 project_name = "monitoring"
 repo = "lorainemg/homelab"
 file_paths = ["monitoring/docker-compose.yml"]
+# Grafana is the only service here with a public hostname; Prometheus (9090)
+# is LAN-only.
+links = [
+  "https://grafana.sussman.win",
+  "http://172.20.3.194:3000",
+  "http://172.20.3.194:9090",
+]
 # Same reason as librechat: these four read their config files at startup only.
 webhook_force_deploy = true
 post_deploy.command = """

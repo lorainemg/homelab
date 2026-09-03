@@ -208,6 +208,15 @@ start of a session; update when a concept lands or a new gap appears.
   longer seeds it. One more wrinkle: `GetStack` on a missing name answers
   HTTP 500 with "Did not find any Stack", not a 404, so the CI branches on
   the body. (2026-09-02)
+- **Komodo's `[[VAR]]` interpolation never reaches `links`, and the sync does
+  none at all** — `lib/interpolate/src/lib.rs` (v2.3.1) lists the seven stack
+  fields that get variables swapped in at deploy time: `file_contents`,
+  `environment`, both deploy commands, `compose_cmd_wrapper` and the two
+  extra-args lists. `bin/core/src/sync/` has no interpolation call, so
+  `stacks.toml` is applied verbatim. The LAN IP in each stack's `links` stays
+  literal, and that is the right answer anyway: those links exist for when
+  Cloudflare is down, and a name resolved through Cloudflare's DNS would share
+  the failure it is meant to survive. (2026-09-03)
 
 ## Shaky
 
