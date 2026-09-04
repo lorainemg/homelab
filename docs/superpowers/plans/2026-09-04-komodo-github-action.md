@@ -4,7 +4,7 @@
 
 **Goal:** Replace ~140 lines of hand-rolled Komodo `curl` across two repos with three task-named composite GitHub Actions sharing one tested Python client.
 
-**Architecture:** A single Python module (`lib/komodo.py`, standard library only) owns authentication, the HTTP call, placeholder expansion from a `vars.env` beside it, and the poll-an-Update-to-completion loop. It exposes a small CLI. Three composite actions (`update-stack`, `deploy-stack`, `run-sync`) are each a few lines of bash that pass inputs through as environment variables and invoke one CLI subcommand. The module is tested with `unittest` against a stub HTTP server that replays real Komodo response shapes, so nothing in the test suite touches the live homelab.
+**Architecture:** A single Python module (`lib/komodo.py`, standard library only) owns authentication, the HTTP call, placeholder expansion from values the caller passes in, and the poll-an-Update-to-completion loop. It exposes a small CLI. Three composite actions (`update-stack`, `deploy-stack`, `run-sync`) are each a few lines of bash that pass inputs through as environment variables and invoke one CLI subcommand. The module is tested with `unittest` against a stub HTTP server that replays real Komodo response shapes, so nothing in the test suite touches the live homelab.
 
 **Tech Stack:** Python 3 standard library only (`urllib.request`, `json`, `argparse`, `http.server`, `unittest`) — preinstalled on `ubuntu-latest` and present on the homelab server (3.13.7). GitHub composite actions with a thin `bash` wrapper per action.
 
@@ -477,25 +477,12 @@ git commit --no-verify -m "poll komodo updates to completion and print the faili
 ### Task 4: `expand`, `stack_exists`, and the payload builders
 
 **Files:**
-- Create: `.github/actions/komodo/vars.env`
 - Modify: `.github/actions/komodo/lib/komodo.py`
 - Modify: `.github/actions/komodo/tests/test_komodo.py`
 
 **Interfaces:**
 - Consumes: `Komodo.call`, `KomodoError`.
-- Produces: module-level `load_vars(path=None) -> dict` and `expand(text, variables) -> str` (raises `KomodoError` if any `${...}` survives). `Komodo.stack_exists(name) -> bool`. `Komodo.stack_config(compose_file, env_file, links, variables) -> dict` and `Komodo.sync_config(toml_file, variables) -> dict`.
-
-- [ ] **Step 1: Create `vars.env`**
-
-Create `.github/actions/komodo/vars.env`:
-
-```bash
-# Values shared by everything that talks to this Komodo. Edit here, nowhere
-# else: the composite actions in this directory expand ${NAME} in their
-# `links` input and in the TOML that run-sync pushes, and scripts/bootstrap.sh
-# renders komodo/stacks.toml through the same library on a fresh server.
-HOMELAB_LAN_IP=172.20.3.194
-```
+- Produces: module-level `load_vars(text=None) -> dict` (reads `KOMODO_VARS` when given nothing) and `expand(text, variables) -> str` (raises `KomodoError` if any `${...}` survives). `Komodo.stack_exists(name) -> bool`. `Komodo.stack_config(compose_file, env_file, links, variables) -> dict` and `Komodo.sync_config(toml_file, variables) -> dict`.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -526,8 +513,14 @@ class TestExpand(unittest.TestCase):
             komodo.expand("http://${NOPE}:1", self.VARS)
         self.assertIn("NOPE", str(caught.exception))
 
-    def test_load_vars_reads_the_file_beside_the_library(self):
-        self.assertEqual(komodo.load_vars()["HOMELAB_LAN_IP"], "172.20.3.194")
+    def test_load_vars_reads_the_pairs_the_caller_passed(self):
+        with unittest.mock.patch.dict(
+                os.environ, {"KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194\n"}):
+            self.assertEqual(komodo.load_vars()["HOMELAB_LAN_IP"], "172.20.3.194")
+
+    def test_load_vars_is_empty_when_the_caller_passed_none(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(komodo.load_vars(), {})
 
 
 class TestStackExists(KomodoTestCase):
@@ -600,14 +593,20 @@ Expected: FAIL with `AttributeError: module 'komodo' has no attribute 'expand'`.
 Append to `lib/komodo.py` — `load_vars` and `expand` at module level, the other two inside the `Komodo` class. Add `import re` and `from pathlib import Path` at the top:
 
 ```python
-VARS_FILE = Path(__file__).resolve().parent.parent / "vars.env"
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def load_vars(path=None):
-    """Read the shared values that sit beside this library."""
+def load_vars(text=None):
+    """Read the ${NAME} values the caller passed in, as NAME=value per line.
+
+    They arrive in KOMODO_VARS, which each composite action sets from its
+    `vars` input. Deliberately not a file: the values are facts about the
+    caller's network, and these actions are vendored into other repos.
+    """
+    if text is None:
+        text = os.environ.get("KOMODO_VARS", "")
     variables = {}
-    for line in Path(path or VARS_FILE).read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -630,7 +629,7 @@ def expand(text, variables):
     if missing:
         raise KomodoError(
             f"unresolved placeholder(s) {', '.join(missing)}; "
-            f"declared in vars.env: {', '.join(sorted(variables)) or 'nothing'}"
+            f"passed in: {', '.join(sorted(variables)) or 'nothing'}"
         )
     return _PLACEHOLDER.sub(lambda m: variables[m.group(1)], text)
 ```
@@ -1021,7 +1020,7 @@ inputs:
     required: false
     default: ""
   links:
-    description: Newline-separated links for the stack page. ${NAME} is expanded from vars.env.
+    description: Newline-separated links for the stack page, with ${NAME} expanded from `vars`.
     required: false
     default: ""
   create-if-missing:
@@ -1202,7 +1201,7 @@ inputs:
     description: Name of the ResourceSync.
     required: true
   contents-file:
-    description: TOML file to push. ${NAME} is expanded from vars.env.
+    description: TOML file to push. Any ${NAME} in it is expanded from `vars`.
     required: true
   timeout:
     description: Seconds to wait for the sync to finish.
@@ -1308,7 +1307,7 @@ Replaces both the inline sync job added on this branch and the signed webhook th
 
 **Files:**
 - Modify: `.github/workflows/deploy.yml`
-- Delete: `komodo/vars.env` (moved to `.github/actions/komodo/vars.env` in Task 4)
+- Delete: `komodo/vars.env` (the value moves into the workflow's `vars` input)
 - Modify: `scripts/bootstrap.sh` (vars path)
 
 **Interfaces:**
@@ -1344,37 +1343,46 @@ Replace the whole `Render stacks.toml and push it into the sync` step with:
           api-secret: ${{ secrets.KOMODO_API_SECRET }}
           sync: homelab
           contents-file: komodo/stacks.toml
+          vars: HOMELAB_LAN_IP=172.20.3.194
 ```
 
-Also update that job's `paths-filter` to watch the new vars location:
+The LAN address is stated here, in the workflow, so the `paths-filter` has to
+watch this file — editing the address is editing `deploy.yml`, and the sync
+must re-run when it changes:
 
 ```yaml
           filters: |
             stacks:
               - 'komodo/stacks.toml'
-              - '.github/actions/komodo/vars.env'
+              # The LAN IP is stated in the sync step below, so editing it is
+              # editing this file -- which has to re-run the sync.
+              - '.github/workflows/deploy.yml'
 ```
 
-- [ ] **Step 3: Move the vars file and point bootstrap at it**
+- [ ] **Step 3: Delete the vars file and point bootstrap at the same renderer**
 
 ```bash
-git rm -q komodo/vars.env
+git rm -q komodo/vars.env .github/actions/komodo/vars.env
 ```
 
-In `scripts/bootstrap.sh`, inside `seed_resource_sync`, replace the `envsubst` render line with a call to the same library the action uses, so there is one renderer rather than two:
+In `scripts/bootstrap.sh`, inside `seed_resource_sync`, replace the `envsubst` render line with a call to the same library the action uses, so there is one renderer rather than two. Bootstrap runs on the server with no workflow to pass inputs, so it takes the value from its own environment:
 
 ```bash
-  rendered=$(python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
+  : "${HOMELAB_LAN_IP:?set to the LAN address of this server, e.g. HOMELAB_LAN_IP=172.20.3.194 scripts/bootstrap.sh}"
+  rendered=$(KOMODO_VARS="HOMELAB_LAN_IP=$HOMELAB_LAN_IP" \
+    python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
 ```
 
-Also update the prerequisite check near the top of the file: it currently demands `envsubst` and `jq`. It now needs `python3` and `jq`.
+Note the `:?` message must not contain an apostrophe: quoting still applies inside `${...}`, so one opens a single-quoted string and `bash -n` fails somewhere further down the file.
+
+Also update the prerequisite check near the top of the file: it currently demands `envsubst` and `jq`. It now needs `python3` and `jq`, plus `HOMELAB_LAN_IP` in the environment.
 
 - [ ] **Step 4: Verify the workflow parses and nothing still references the old path**
 
 ```bash
 python3 -c 'import yaml; d=yaml.safe_load(open(".github/workflows/deploy.yml")); print("jobs:", list(d["jobs"]))'
 bash -n scripts/bootstrap.sh && echo "bootstrap syntax ok"
-! grep -rn 'komodo/vars.env' --include='*.yml' --include='*.sh' . | grep -v '^./docs/' | grep . && echo "no stale vars path in code"
+! grep -rn 'vars\.env' --include='*.yml' --include='*.sh' --include='*.py' --include='*.toml' . | grep -v '^./docs/' | grep . && echo "no stale vars path in code"
 grep -c 'openssl dgst' .github/workflows/deploy.yml || echo "hmac signing gone"
 ```
 
@@ -1383,7 +1391,7 @@ Expected: two jobs, `bootstrap syntax ok`, `no stale vars path in code`, `hmac s
 - [ ] **Step 5: Verify bootstrap's render still produces the applied config**
 
 ```bash
-rendered=$(python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
+rendered=$(KOMODO_VARS=HOMELAB_LAN_IP=172.20.3.194 python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
 diff <(grep -v '^#' <<<"$rendered") <(git show origin/main:komodo/stacks.toml | grep -v '^#') \
   && echo "rendered output matches what is live"
 ```
@@ -1473,7 +1481,7 @@ Delete the `Ensure the Komodo stack exists`, `Push the generated compose and env
 ```yaml
       # The dashboard's host port is read back from Aspire's own output, so it
       # is declared once, in apphost.cs. ${HOMELAB_LAN_IP} is expanded by the
-      # action from the homelab repo's vars.env, which is checked out with it.
+      # action from the `vars` input two steps below.
       - name: Read the dashboard's published port
         id: dash
         shell: bash
@@ -1495,6 +1503,7 @@ Delete the `Ensure the Komodo stack exists`, `Push the generated compose and env
           compose-file: aspire-output/docker-compose.yaml
           env-file: aspire-output/.env.production
           links: http://${HOMELAB_LAN_IP}:${{ steps.dash.outputs.port }}/login?t=${{ secrets.ASPIRE_BROWSER_TOKEN }}
+          vars: HOMELAB_LAN_IP=172.20.3.194
 
       - name: Deploy the stack and wait for the result
         uses: lorainemg/homelab/.github/actions/komodo/deploy-stack@main
@@ -1525,7 +1534,7 @@ git commit --no-verify -m "deploy through the shared komodo action instead of ha
 git push -u origin use-komodo-action
 gh pr create --base main --head use-komodo-action \
   --title "deploy through the shared komodo action instead of hand-rolled curl" \
-  --body "Replaces this repo's hand-rolled Komodo curl with the shared actions in the homelab repo. The LAN address comes from the action's own vars.env, so nothing is fetched at deploy time.
+  --body "Replaces this repo's hand-rolled Komodo curl with the shared actions in the homelab repo. The LAN address is stated in this workflow's \`vars\` input, so nothing is fetched at deploy time.
 
 **Merge order:** lorainemg/homelab#6 must merge first. This references the action at \`@main\`, and it does not resolve until then. Nothing breaks in the meantime: this workflow only runs on push to main and workflow_dispatch, so PR checks here never touch it."
 ```
@@ -1533,7 +1542,7 @@ gh pr create --base main --head use-komodo-action \
 - [ ] **Step 5: Close the superseded PR**
 
 ```bash
-gh pr close 12 --comment "Superseded: the LAN address now comes from the action's own vars.env, so there is nothing to fetch."
+gh pr close 12 --comment "Superseded: the LAN address is now an input on the shared action, so there is nothing to fetch."
 ```
 
 ---
@@ -1551,7 +1560,7 @@ gh pr close 12 --comment "Superseded: the LAN address now comes from the action'
 
 - [ ] **Step 1: Update the README's CI/CD section**
 
-Rewrite the `sync-komodo` paragraph so it describes the action rather than inline curl, and correct the secrets list: `KOMODO_URL`, `KOMODO_API_KEY` and `KOMODO_API_SECRET`, with `KOMODO_WEBHOOK_SECRET` no longer held by CI. State that `config` now deploys through the API like every other stack, and that the shared values live in `.github/actions/komodo/vars.env`. Also correct the rebuild step 4 secrets list and the `bootstrap.sh` paragraph's vars path.
+Rewrite the `sync-komodo` paragraph so it describes the action rather than inline curl, and correct the secrets list: `KOMODO_URL`, `KOMODO_API_KEY` and `KOMODO_API_SECRET`, with `KOMODO_WEBHOOK_SECRET` no longer held by CI. State that `config` now deploys through the API like every other stack, and that `${HOMELAB_LAN_IP}` is supplied by each workflow's `vars` input rather than a file in the repo. Also correct the rebuild step 4 secrets list, and the `bootstrap.sh` paragraph: it now needs `HOMELAB_LAN_IP` in the environment.
 
 - [ ] **Step 2: Add the LEARNING.md entry**
 
@@ -1563,9 +1572,9 @@ Add under `## Covered`, replacing nothing:
   against the *caller's* workspace, so it breaks the moment another repo uses
   the action. Reaching `$GITHUB_ACTION_PATH/../lib/komodo.py` works because
   GitHub checks out the whole action repository, not just the action's own
-  directory. That same fact is what lets the bot repo read this repo's
-  `vars.env` without fetching anything: the file is physically on the runner
-  beside the action. One shared client, one copy of the LAN address, and
+  directory. Site-specific values do *not* travel that way, though: each
+  caller passes them in as a `vars` input, because a shared tool holding one
+  house's LAN address is config smuggled into a library. One shared client,
   ~140 lines of hand-rolled curl deleted across two repos. (2026-09-04)
 - **`${{ }}` in a `run:` block is a shell injection, not a variable** — GitHub
   substitutes expressions into the *text* of the script before bash sees it, so

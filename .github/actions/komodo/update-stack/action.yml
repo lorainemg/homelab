@@ -23,7 +23,14 @@ inputs:
     required: false
     default: ""
   links:
-    description: Newline-separated links for the stack page. ${NAME} is expanded from vars.env.
+    description: Newline-separated links for the stack page, with ${NAME} expanded from `vars`.
+    required: false
+    default: ""
+  vars:
+    description: |
+      Values for the ${NAME} placeholders in links, one NAME=value per line.
+      A placeholder with no value here fails the step rather than rendering
+      empty.
     required: false
     default: ""
   create-if-missing:
@@ -49,6 +56,7 @@ runs:
         ENV_FILE: ${{ inputs.env-file }}
         LINKS: ${{ inputs.links }}
         CREATE_IF_MISSING: ${{ inputs.create-if-missing }}
+        KOMODO_VARS: ${{ inputs.vars }}
       run: |
         set -euo pipefail
         # Every input reaches the script as an environment variable, never as a

@@ -5,12 +5,12 @@
 # file that layer exists only in the database and cannot be grepped, reviewed
 # or rebuilt from the repo.
 #
-# This file is a template. `${HOMELAB_LAN_IP}` is filled in from
-# komodo/vars.env by the sync job in .github/workflows/deploy.yml (and by
-# scripts/bootstrap.sh on a fresh server), and the rendered TOML is pushed
-# into the `homelab` sync, which holds it as contents instead of cloning this
-# repo. So Komodo never reads this file directly, and a value that appears in
-# many links is written once, in vars.env.
+# This file is a template. `${HOMELAB_LAN_IP}` is filled in by the sync job in
+# .github/workflows/deploy.yml, which states the value in its `vars` input (and
+# by scripts/bootstrap.sh on a fresh server, which takes it from its
+# environment). The rendered TOML is pushed into the `homelab` sync, which
+# holds it as contents instead of cloning this repo — so Komodo never reads
+# this file directly, and a value that appears in many links is written once.
 #
 # Only non-default fields are declared. Komodo's sync diffs *declared* fields
 # against the live config and cannot see the rest, so anything omitted here is

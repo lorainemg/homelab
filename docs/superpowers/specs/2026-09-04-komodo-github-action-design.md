@@ -53,7 +53,6 @@ action's job rather than Komodo's.
 
 ```
 .github/actions/komodo/
-├── vars.env                  values shared by everything that talks to this Komodo
 ├── lib/komodo.py             the whole client: call, await_update, expand,
 │                             stack_exists, plus a CLI the actions invoke
 ├── tests/stub_komodo.py      a stand-in Komodo, replaying real response shapes
@@ -88,20 +87,29 @@ understanding its own infrastructure, is a first-class requirement rather than
 a preference. Python 3 is preinstalled on `ubuntu-latest`, and the homelab
 server runs 3.13.7.
 
-### `vars.env` moves into the action directory
+### Shared values are passed in, not stored
 
-`komodo/vars.env` becomes `.github/actions/komodo/vars.env`, holding
-`HOMELAB_LAN_IP` and anything later shared by all callers.
+Every action takes a `vars` input: `NAME=value`, one per line. It reaches the
+client as `KOMODO_VARS`, and `${NAME}` in a `links` input or in the TOML that
+`run-sync` pushes is expanded from it. Nothing on disk holds those values.
 
-This is the whole reason the LAN address stops being duplicated. When the bot
-repo uses this action, GitHub checks this repo out on the runner, so
-`vars.env` is physically present next to the action code. The action expands
-`${HOMELAB_LAN_IP}` in its `links` input and in the TOML that `run-sync`
-pushes. A caller writes the placeholder literally and fetches nothing:
+The alternative considered and rejected was a `vars.env` file shipped inside
+the action directory, which every caller would get for free because GitHub
+checks the action's whole repository out on the runner. It removes the
+duplication, but at the price of putting a fact about one particular house
+inside a tool two repos share — a caller vendoring the action would also
+vendor someone's LAN. Each workflow states the values it uses:
 
 ```yaml
-links: http://${HOMELAB_LAN_IP}:28888/login?t=...
+        with:
+          links: http://${HOMELAB_LAN_IP}:28888/login?t=...
+          vars: HOMELAB_LAN_IP=172.20.3.194
 ```
+
+The cost is that the address appears in each repo that deploys to this Komodo,
+and a re-addressed LAN means editing both. That is two greppable lines in two
+workflows, against a shared tool that no longer knows anything about a
+specific network.
 
 The trade: a value that is conceptually infrastructure config now lives under
 `.github/`. That is accepted because its only readers are the action and the
@@ -117,7 +125,8 @@ missing.
 | `stack` | yes | stack name |
 | `compose-file` | no | file whose contents become `file_contents` |
 | `env-file` | no | file whose contents become `environment` |
-| `links` | no | newline-separated; `${VAR}` expanded from `vars.env` |
+| `links` | no | newline-separated; `${VAR}` expanded from `vars` |
+| `vars` | no | `NAME=value` per line, for the placeholders in `links` |
 | `create-if-missing` | no, default `false` | create the stack before updating |
 | `server` | no, default `Local` | server for the create path only |
 
@@ -144,7 +153,8 @@ away.
 | Input | Required | Meaning |
 |---|---|---|
 | `sync` | yes | sync name |
-| `contents-file` | yes | TOML file; `${VAR}` expanded from `vars.env` |
+| `contents-file` | yes | TOML file; `${VAR}` expanded from `vars` |
+| `vars` | no | `NAME=value` per line, for the placeholders in the TOML |
 | `timeout` | no, default `300` | seconds to wait for the Update |
 
 Renders the file, fails if any `${...}` placeholder survives, pushes it with
@@ -214,8 +224,8 @@ verification in this repo.
   longer needed by CI, though the per-stack GitHub webhooks that Komodo
   listens on are unaffected.
 - PR #12 in the bot repo is superseded and gets closed: the cross-repo fetch
-  of `vars.env` over `raw.githubusercontent.com` is replaced by the action's
-  own substitution.
+  of `vars.env` over `raw.githubusercontent.com` is replaced by the workflow
+  stating the value in its own `vars` input.
 - PR #6 in this repo is rewritten on its branch. The `stacks.toml` template
   and the repo-to-contents switch survive unchanged; only the inline curl in
   the workflow is replaced by `run-sync`.

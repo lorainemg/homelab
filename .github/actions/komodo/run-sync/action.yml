@@ -15,8 +15,15 @@ inputs:
     description: Name of the ResourceSync.
     required: true
   contents-file:
-    description: TOML file to push. ${NAME} is expanded from vars.env.
+    description: TOML file to push. Any ${NAME} in it is expanded from `vars`.
     required: true
+  vars:
+    description: |
+      Values for the ${NAME} placeholders in contents-file, one NAME=value per
+      line. A placeholder with no value here fails the step rather than
+      rendering empty.
+    required: false
+    default: ""
   timeout:
     description: Seconds to wait for the sync to finish.
     required: false
@@ -33,6 +40,7 @@ runs:
         SYNC: ${{ inputs.sync }}
         CONTENTS_FILE: ${{ inputs.contents-file }}
         TIMEOUT: ${{ inputs.timeout }}
+        KOMODO_VARS: ${{ inputs.vars }}
       run: |
         set -euo pipefail
         # Every input reaches the script as an environment variable, never as a

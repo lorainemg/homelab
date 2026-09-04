@@ -20,14 +20,20 @@ class KomodoError(RuntimeError):
     """Anything Komodo refused, or any response we could not use."""
 
 
-VARS_FILE = Path(__file__).resolve().parent.parent / "vars.env"
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
-def load_vars(path=None):
-    """Read the shared values that sit beside this library."""
+def load_vars(text=None):
+    """Read the ${NAME} values the caller passed in, as NAME=value per line.
+
+    They arrive in KOMODO_VARS, which each composite action sets from its
+    `vars` input. Deliberately not a file: the values are facts about the
+    caller's network, and these actions are vendored into other repos.
+    """
+    if text is None:
+        text = os.environ.get("KOMODO_VARS", "")
     variables = {}
-    for line in Path(path or VARS_FILE).read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -50,7 +56,7 @@ def expand(text, variables):
     if missing:
         raise KomodoError(
             f"unresolved placeholder(s) {', '.join(missing)}; "
-            f"declared in vars.env: {', '.join(sorted(variables)) or 'nothing'}"
+            f"passed in: {', '.join(sorted(variables)) or 'nothing'}"
         )
     return _PLACEHOLDER.sub(lambda m: variables[m.group(1)], text)
 

@@ -5,7 +5,8 @@
 #
 # Prerequisites:
 #   - Docker Engine + Compose plugin installed
-#   - envsubst and jq on this machine, to render komodo/stacks.toml
+#   - python3 and jq on this machine, to render komodo/stacks.toml
+#   - HOMELAB_LAN_IP set to this server's LAN address, for the same render
 #   - A data disk mounted at $DATA_ROOT (default /data) holding service state
 #   - tunnel/.env and komodo/.env created from their .env.example files
 set -euo pipefail
@@ -72,9 +73,9 @@ wait_for_core() {
 
 # Komodo's Stacks are declared in komodo/stacks.toml, but the ResourceSync
 # object that holds them lives only in Mongo and cannot declare itself. The
-# file is a template (`${HOMELAB_LAN_IP}` comes from komodo/vars.env), so it
-# is rendered here exactly as the sync-komodo job in .github/workflows/deploy.yml
-# renders it, pushed in as the sync's contents (Komodo never clones this repo
+# file is a template (`${HOMELAB_LAN_IP}` comes from this script's own
+# environment), so it is rendered here by the same library the sync-komodo job
+# in .github/workflows/deploy.yml uses, pushed in as the sync's contents (Komodo never clones this repo
 # for it), and run once so a fresh machine ends up with every Stack, no UI
 # involved. Safe to re-run: an existing sync is left alone, because CI owns
 # its contents from then on.
@@ -84,9 +85,12 @@ seed_resource_sync() {
     echo "    already exists — skipping"
     return 0
   fi
-  command -v envsubst jq >/dev/null || { echo "!! envsubst and jq are needed to render komodo/stacks.toml." >&2; exit 1; }
+  command -v python3 jq >/dev/null || { echo "!! python3 and jq are needed to render komodo/stacks.toml." >&2; exit 1; }
+  : "${HOMELAB_LAN_IP:?set to the LAN address of this server, e.g. HOMELAB_LAN_IP=172.20.3.194 scripts/bootstrap.sh}"
   local rendered payload
-  rendered=$(set -a; . komodo/vars.env; set +a; envsubst '${HOMELAB_LAN_IP}' < komodo/stacks.toml)
+  # Same renderer as CI: an unresolved ${NAME} is an error, not an empty link.
+  rendered=$(KOMODO_VARS="HOMELAB_LAN_IP=$HOMELAB_LAN_IP" \
+    python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
   payload=$(jq -n --arg toml "$rendered" '{type:"CreateResourceSync",params:{name:"homelab",config:{
     file_contents:$toml, managed:false, delete:false, webhook_enabled:false}}}')
   api /write "$payload" "$JWT" \

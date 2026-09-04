@@ -138,8 +138,17 @@ class TestExpand(unittest.TestCase):
             komodo.expand("http://${NOPE}:1", self.VARS)
         self.assertIn("NOPE", str(caught.exception))
 
-    def test_load_vars_reads_the_file_beside_the_library(self):
-        self.assertEqual(komodo.load_vars()["HOMELAB_LAN_IP"], "172.20.3.194")
+    def test_load_vars_reads_the_pairs_the_caller_passed(self):
+        # The workflow states its own values; nothing on disk holds them.
+        with unittest.mock.patch.dict(
+                os.environ, {"KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194\n"}):
+            self.assertEqual(komodo.load_vars()["HOMELAB_LAN_IP"], "172.20.3.194")
+
+    def test_load_vars_is_empty_when_the_caller_passed_none(self):
+        # An action with no `vars` input is fine as long as nothing needs one;
+        # a file that then hits ${NAME} fails in expand(), with the name in it.
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(komodo.load_vars(), {})
 
 
 class TestStackExists(KomodoTestCase):
@@ -235,6 +244,7 @@ class TestUpdateStackCommand(KomodoTestCase):
             "KOMODO_URL": self._stub.url,
             "KOMODO_API_KEY": "test-key",
             "KOMODO_API_SECRET": "test-secret",
+            "KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194",
         }
 
     def test_creates_the_stack_when_missing_then_updates_it(self):
@@ -272,6 +282,7 @@ class TestRunSyncCommand(KomodoTestCase):
             "KOMODO_API_KEY": "test-key",
             "KOMODO_API_SECRET": "test-secret",
             "KOMODO_POLL_INTERVAL": "0",
+            "KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194",
         }
 
     def setUp(self):
@@ -294,7 +305,9 @@ class TestRunSyncCommand(KomodoTestCase):
 
     def test_render_prints_the_expanded_file_and_contacts_nothing(self):
         captured = io.StringIO()
-        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+        with unittest.mock.patch.dict(
+                os.environ,
+                {"KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194"}, clear=True):
             with contextlib.redirect_stdout(captured):
                 code = komodo.main(["render", str(self.toml)])
         self.assertEqual(code, 0)
