@@ -596,47 +596,76 @@ git commit --no-verify -m "add the deploy-stack action"
 - Consumes: `komodo_call`, `komodo_expand`, `komodo_stack_exists`.
 - Produces: a composite action with inputs `komodo-url`, `api-key`, `api-secret`, `stack`, `compose-file`, `env-file`, `links`, `create-if-missing` (default `false`), `server` (default `Local`). Builds an `UpdateStack` config containing only the fields whose inputs were given.
 
-- [ ] **Step 1: Write the failing test for payload assembly**
+Payload assembly lives in the library, not in the action's YAML, so the tests
+exercise the code that actually ships. (Controller ruling, 2026-09-04: the
+original plan duplicated this block between test and action.)
+
+- [ ] **Step 1: Write the failing test**
 
 Append to `run_tests.sh`, before `exit $FAILED`:
 
 ```bash
-echo "update-stack payload"
+echo "komodo_stack_config"
 tmp=$(mktemp -d)
 printf 'services: {}\n' > "$tmp/compose.yaml"
 printf 'A=1\n'           > "$tmp/.env"
 
-build_config() { # <compose-file> <env-file> <links>
-  local cfg='{}'
-  [[ -n $1 ]] && cfg=$(jq --rawfile f "$1" '.file_contents = $f' <<<"$cfg")
-  [[ -n $2 ]] && cfg=$(jq --rawfile f "$2" '.environment   = $f' <<<"$cfg")
-  if [[ -n $3 ]]; then
-    local expanded; expanded=$(komodo_expand "$3") || return 1
-    cfg=$(jq --arg l "$expanded" '.links = ($l | split("\n") | map(select(length>0)))' <<<"$cfg")
-  fi
-  printf '%s' "$cfg"
-}
-
-cfg=$(build_config "$tmp/compose.yaml" "$tmp/.env" 'http://${HOMELAB_LAN_IP}:28888/login')
+cfg=$(komodo_stack_config "$tmp/compose.yaml" "$tmp/.env" 'http://${HOMELAB_LAN_IP}:28888/login')
 assert_eq "$(jq -r '.links[0]' <<<"$cfg")" "http://172.20.3.194:28888/login" "expands links"
 assert_eq "$(jq -r '.file_contents' <<<"$cfg")" "services: {}" "carries the compose file"
 assert_eq "$(jq -r '.environment' <<<"$cfg")" "A=1" "carries the env file"
 
-cfg=$(build_config "$tmp/compose.yaml" "" "")
+cfg=$(komodo_stack_config "$tmp/compose.yaml" "" "")
 assert_eq "$(jq -r 'has("environment")' <<<"$cfg")" "false" "omits fields with no input"
 assert_eq "$(jq -r 'has("links")' <<<"$cfg")" "false" "omits links with no input"
+
+cfg=$(komodo_stack_config "" "" $'http://${HOMELAB_LAN_IP}:1\nhttp://${HOMELAB_LAN_IP}:2')
+assert_eq "$(jq -r '.links | length' <<<"$cfg")" "2" "splits multiple links"
+
+assert_fails "an unknown placeholder in links fails" \
+  komodo_stack_config "" "" 'http://${NOPE}:1'
 rm -rf "$tmp"
 ```
 
-- [ ] **Step 2: Run the tests to verify they pass**
+- [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
 .github/actions/komodo/tests/run_tests.sh
 ```
 
-Expected: five `ok` lines under `update-stack payload`. (The helper under test is defined in the test itself and mirrored verbatim in the action below; the assertion that matters is the omit-when-absent behaviour, which is what protects a stack's unmentioned fields.)
+Expected: FAIL with `komodo_stack_config: command not found`.
 
-- [ ] **Step 3: Write the action**
+- [ ] **Step 3: Implement `komodo_stack_config` in the library**
+
+Append to `lib/komodo.sh`:
+
+```bash
+# komodo_stack_config <compose-file> <env-file> <links>
+# Builds an UpdateStack config from whichever inputs were supplied. An empty
+# argument means "leave that field alone": omitted fields are absent from the
+# payload, so an update never clears something the caller did not mention.
+komodo_stack_config() {
+  local compose=$1 env_file=$2 links=$3 cfg='{}' expanded
+  [[ -n $compose ]] && cfg=$(jq --rawfile f "$compose" '.file_contents = $f' <<<"$cfg")
+  [[ -n $env_file ]] && cfg=$(jq --rawfile f "$env_file" '.environment = $f' <<<"$cfg")
+  if [[ -n $links ]]; then
+    expanded=$(komodo_expand "$links") || return 1
+    cfg=$(jq --arg l "$expanded" \
+      '.links = ($l | split("\n") | map(select(length > 0)))' <<<"$cfg")
+  fi
+  printf '%s' "$cfg"
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+```bash
+.github/actions/komodo/tests/run_tests.sh
+```
+
+Expected: seven `ok` lines under `komodo_stack_config`, exit 0.
+
+- [ ] **Step 5: Write the action**
 
 Create `.github/actions/komodo/update-stack/action.yml`:
 
@@ -712,20 +741,14 @@ runs:
 
         # Only the fields the caller supplied go in, so an omitted input never
         # clears what is already on the stack.
-        cfg='{}'
-        [[ -n $COMPOSE_FILE ]] && cfg=$(jq --rawfile f "$COMPOSE_FILE" '.file_contents = $f' <<<"$cfg")
-        [[ -n $ENV_FILE     ]] && cfg=$(jq --rawfile f "$ENV_FILE"     '.environment   = $f' <<<"$cfg")
-        if [[ -n $LINKS ]]; then
-          expanded=$(komodo_expand "$LINKS")
-          cfg=$(jq --arg l "$expanded" '.links = ($l | split("\n") | map(select(length>0)))' <<<"$cfg")
-        fi
+        cfg=$(komodo_stack_config "$COMPOSE_FILE" "$ENV_FILE" "$LINKS")
 
         komodo_call write "$(jq -n --arg s "$STACK" --argjson c "$cfg" \
           '{type:"UpdateStack",params:{id:$s,config:$c}}')" > /dev/null
         echo "stack $STACK updated"
 ```
 
-- [ ] **Step 4: Verify the YAML parses**
+- [ ] **Step 6: Verify the YAML parses**
 
 ```bash
 python3 -c 'import yaml; d=yaml.safe_load(open(".github/actions/komodo/update-stack/action.yml")); print("inputs:", list(d["inputs"]))'
@@ -733,7 +756,7 @@ python3 -c 'import yaml; d=yaml.safe_load(open(".github/actions/komodo/update-st
 
 Expected: the nine input names.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add .github/actions/komodo
@@ -766,26 +789,55 @@ name = "docker-registry"
 links = ["http://${HOMELAB_LAN_IP}:5000"]
 TOML
 
-rendered=$(komodo_expand "$(cat "$tmp/stacks.toml")")
-assert_contains "$rendered" "http://172.20.3.194:5000" "renders the toml"
-
-payload=$(jq -n --arg s homelab --arg toml "$rendered" \
-  '{type:"UpdateResourceSync",params:{id:$s,config:{
-     file_contents:$toml, repo:"", branch:"", resource_path:[]}}}')
+payload=$(komodo_sync_config homelab "$tmp/stacks.toml")
+assert_contains "$(jq -r '.params.config.file_contents' <<<"$payload")" \
+  "http://172.20.3.194:5000" "renders the toml"
 assert_eq "$(jq -r '.params.config.repo' <<<"$payload")" "" "clears repo"
+assert_eq "$(jq -r '.params.config.branch' <<<"$payload")" "" "clears branch"
 assert_eq "$(jq -r '.params.config.resource_path | length' <<<"$payload")" "0" "clears resource_path"
+assert_eq "$(jq -r '.params.id' <<<"$payload")" "homelab" "targets the named sync"
+
+printf 'links = ["http://${NOPE}:1"]\n' > "$tmp/bad.toml"
+assert_fails "an unknown placeholder fails" komodo_sync_config homelab "$tmp/bad.toml"
 rm -rf "$tmp"
 ```
 
-- [ ] **Step 2: Run the tests to verify they pass**
+- [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
 .github/actions/komodo/tests/run_tests.sh
 ```
 
-Expected: three `ok` lines under `run-sync payload`.
+Expected: FAIL with `komodo_sync_config: command not found`.
 
-- [ ] **Step 3: Write the action**
+- [ ] **Step 3: Implement `komodo_sync_config` in the library**
+
+Append to `lib/komodo.sh`:
+
+```bash
+# komodo_sync_config <sync-name> <toml-file>
+# Builds the UpdateResourceSync request for a contents-mode sync. repo, branch
+# and resource_path are cleared every time: Komodo picks its source in that
+# order and prefers a repo over stored contents, so leaving them set would
+# silently ignore what we just pushed (bin/core/src/sync/remote.rs, v2.3.1).
+komodo_sync_config() {
+  local sync=$1 file=$2 rendered
+  rendered=$(komodo_expand "$(cat "$file")") || return 1
+  jq -n --arg s "$sync" --arg toml "$rendered" \
+    '{type:"UpdateResourceSync",params:{id:$s,config:{
+       file_contents:$toml, repo:"", branch:"", resource_path:[]}}}'
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+```bash
+.github/actions/komodo/tests/run_tests.sh
+```
+
+Expected: six `ok` lines under `run-sync payload`, exit 0.
+
+- [ ] **Step 5: Write the action**
 
 Create `.github/actions/komodo/run-sync/action.yml`:
 
@@ -829,21 +881,14 @@ runs:
         set -euo pipefail
         source "$GITHUB_ACTION_PATH/../lib/komodo.sh"
 
-        rendered=$(komodo_expand "$(cat "$CONTENTS_FILE")")
-
-        # repo/branch/resource_path are cleared on every push: Komodo picks its
-        # source in that order and prefers a repo over stored contents, so
-        # leaving them set would silently ignore what we just sent.
-        komodo_call write "$(jq -n --arg s "$SYNC" --arg toml "$rendered" \
-          '{type:"UpdateResourceSync",params:{id:$s,config:{
-             file_contents:$toml, repo:"", branch:"", resource_path:[]}}}')" > /dev/null
+        komodo_call write "$(komodo_sync_config "$SYNC" "$CONTENTS_FILE")" > /dev/null
 
         resp=$(komodo_call execute "$(jq -n --arg s "$SYNC" \
           '{type:"RunSync",params:{sync:$s}}')")
         komodo_await "$(jq -r '._id."$oid"' <<<"$resp")" "$TIMEOUT"
 ```
 
-- [ ] **Step 4: Verify the YAML parses**
+- [ ] **Step 6: Verify the YAML parses**
 
 ```bash
 python3 -c 'import yaml; d=yaml.safe_load(open(".github/actions/komodo/run-sync/action.yml")); print("inputs:", list(d["inputs"]))'
@@ -851,7 +896,7 @@ python3 -c 'import yaml; d=yaml.safe_load(open(".github/actions/komodo/run-sync/
 
 Expected: the six input names.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add .github/actions/komodo
@@ -987,11 +1032,11 @@ In `scripts/bootstrap.sh`, inside `seed_resource_sync`, change the render line f
 ```bash
 python3 -c 'import yaml; d=yaml.safe_load(open(".github/workflows/deploy.yml")); print("jobs:", list(d["jobs"]))'
 bash -n scripts/bootstrap.sh && echo "bootstrap syntax ok"
-! grep -rn 'komodo/vars.env' --include='*.yml' --include='*.sh' --include='*.md' . && echo "no stale vars path"
+! grep -rn 'komodo/vars.env' --include='*.yml' --include='*.sh' . | grep -v '^./docs/' | grep . && echo "no stale vars path in code"
 grep -c 'openssl dgst' .github/workflows/deploy.yml || echo "hmac signing gone"
 ```
 
-Expected: two jobs, `bootstrap syntax ok`, `no stale vars path`, `hmac signing gone`.
+Expected: two jobs, `bootstrap syntax ok`, `no stale vars path in code`, `hmac signing gone`. Prose under `docs/` keeps the old path on purpose (it describes the move); README and LEARNING are corrected in Task 12.
 
 - [ ] **Step 5: Verify bootstrap's render still produces the applied config**
 
@@ -1137,7 +1182,10 @@ git add .github/workflows/deploy-main.yml
 git commit --no-verify -m "deploy through the shared komodo action instead of hand-rolled curl"
 git push -u origin use-komodo-action
 gh pr create --base main --head use-komodo-action \
-  --title "deploy through the shared komodo action instead of hand-rolled curl"
+  --title "deploy through the shared komodo action instead of hand-rolled curl" \
+  --body "Replaces this repo's hand-rolled Komodo curl with the shared actions in the homelab repo. The LAN address comes from the action's own vars.env, so nothing is fetched at deploy time.
+
+**Merge order:** lorainemg/homelab#6 must merge first. This references the action at \`@main\`, and it does not resolve until then. Nothing breaks in the meantime: this workflow only runs on push to main and workflow_dispatch, so PR checks here never touch it."
 ```
 
 - [ ] **Step 5: Close the superseded PR**
