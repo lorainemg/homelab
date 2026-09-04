@@ -1,7 +1,7 @@
 # A Komodo GitHub Action — design
 
 **Date:** 2026-09-04
-**Status:** approved, ready to implement
+**Status:** approved, ready to implement (revised 2026-09-04: Python, not bash — see Layout)
 
 Replace the hand-rolled `curl` that talks to Komodo from CI with three
 task-named composite actions in `.github/actions/komodo/`, used by both this
@@ -53,19 +53,40 @@ action's job rather than Komodo's.
 
 ```
 .github/actions/komodo/
-├── vars.env              values shared by everything that talks to this Komodo
-├── lib/komodo.sh         auth, call, await_update, resolve_vars, stack_exists
+├── vars.env                  values shared by everything that talks to this Komodo
+├── lib/komodo.py             the whole client: call, await_update, expand,
+│                             stack_exists, plus a CLI the actions invoke
+├── tests/stub_komodo.py      a stand-in Komodo, replaying real response shapes
+├── tests/test_komodo.py      unittest suite against that stub
 ├── update-stack/action.yml
 ├── deploy-stack/action.yml
 └── run-sync/action.yml
 ```
 
-Each `action.yml` is a composite action whose single `run:` step sources
-`$GITHUB_ACTION_PATH/../lib/komodo.sh`. Composite actions cannot share code
-through a nested `uses:` when referenced across repos, because a relative
-`uses:` resolves against the *caller's* workspace. Sourcing a sibling file
-works because GitHub checks out the whole action repository, so
-`$GITHUB_ACTION_PATH/..` is this repo's `.github/actions/komodo/`.
+Each `action.yml` is a composite action whose single `run:` step is three or
+four lines of bash that pass the action's inputs through as environment
+variables and invoke
+`python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" <subcommand>`. Composite
+actions cannot share code through a nested `uses:` when referenced across
+repos, because a relative `uses:` resolves against the *caller's* workspace.
+Reaching a sibling file works because GitHub checks out the whole action
+repository, so `$GITHUB_ACTION_PATH/..` is this repo's
+`.github/actions/komodo/`.
+
+**Why Python rather than bash.** An earlier draft of this library was written
+in bash and reviewed before being discarded. Every defect the review found was
+a bash-specific footgun rather than a logic error: a function returning
+non-zero silently aborts its caller under `set -e`, so the missing-stack probe
+killed the step it was meant to inform; capturing a 500 body depends on
+whether `2>&1` precedes or follows `>/dev/null`; and `envsubst` substitutes
+every exported name unless handed an explicit list, so a `$` in a compose file
+is a hazard. The call-poll-check logic was correct in both versions. Python
+removes that whole class of mistake, uses nothing outside the standard
+library (`urllib.request`, `json`, `argparse`), and is the language this
+repo's owner reads most comfortably — which, in a repo whose stated purpose is
+understanding its own infrastructure, is a first-class requirement rather than
+a preference. Python 3 is preinstalled on `ubuntu-latest`, and the homelab
+server runs 3.13.7.
 
 ### `vars.env` moves into the action directory
 
@@ -130,6 +151,11 @@ Renders the file, fails if any `${...}` placeholder survives, pushes it with
 `repo`, `branch` and `resource_path` explicitly empty, then runs the sync and
 waits exactly as `deploy-stack` does.
 
+The CLI also exposes a fourth subcommand, `render <file>`, which prints the
+expanded file and talks to nothing. That exists for `scripts/bootstrap.sh`,
+which needs the same rendering on a fresh server where no runner and no API
+key exist. One renderer, two callers.
+
 ### Authentication
 
 All three take `komodo-url`, `api-key` and `api-secret` inputs, sent as
@@ -151,17 +177,27 @@ One code path for every call:
 
 ## Testing
 
-The library is plain bash whose only outside contact is `curl` against a base
-URL, so it is testable without touching the homelab.
+The library's only outside contact is HTTP against a base URL, so it is
+testable without touching the homelab.
 
-**Unit tests against a stub server.** A small Python `http.server` in
-`.github/actions/komodo/tests/` replays real Komodo response shapes captured
-from the live server: a missing stack (500 with the "Did not find any Stack"
-body), an accepted-then-failed update, an accepted-then-succeeded update, and
-a non-2xx write. The tests assert that `stack_exists` is false for the 500
-body, that a failed update fails the step and prints its stage logs, that a
-timeout fails rather than passes, and that placeholder expansion leaves no
-`${` behind. These run in CI on every push that touches the action.
+**Unit tests against a stub server.** A `http.server` in
+`.github/actions/komodo/tests/stub_komodo.py` replays real Komodo response
+shapes captured from the live server: a missing stack (500 with the "Did not
+find any Stack" body), an accepted-then-failed update, an
+accepted-then-succeeded update, and a non-2xx write. It also validates the
+request *path* against the request type, so a read sent to `/execute` is a
+test failure rather than a silent pass — later work trusts this harness for
+exactly that.
+
+`tests/test_komodo.py` is a `unittest` suite run with
+`python3 -m unittest discover`. It asserts that `stack_exists` is false for
+the 500 body and true otherwise, that a failed update raises and prints its
+stage logs, that a timeout raises rather than passing, that placeholder
+expansion leaves no `${` behind and does not disturb a bare `$`, that an
+update payload omits fields the caller did not supply, and that a failed
+request never echoes a value from the request body — that last one driving
+the *error* branch, which is the only path where such a leak could occur.
+These run in CI on every push that touches the action.
 
 **One live smoke test.** After merge, a `workflow_dispatch` run exercises
 `run-sync` against the real server, whose rendered output must produce a
@@ -183,9 +219,11 @@ verification in this repo.
 - PR #6 in this repo is rewritten on its branch. The `stacks.toml` template
   and the repo-to-contents switch survive unchanged; only the inline curl in
   the workflow is replaced by `run-sync`.
-- `scripts/bootstrap.sh` keeps its own rendering, reading the vars file from
-  its new path under `.github/actions/komodo/`. It runs on a fresh server with
-  no GitHub runner and no API key, so it cannot use the action, and the
-  duplication is deliberate: bootstrap must work when CI does not. A shell
-  script reaching into `.github/` is the visible cost of keeping one canonical
-  copy of the values.
+- `scripts/bootstrap.sh` renders through the same library, calling
+  `python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml`.
+  It runs on a fresh server with no GitHub runner and no API key, so it cannot
+  use the *action*, but it can use the library the action wraps. That removes
+  the duplicate renderer an earlier draft of this design accepted as
+  unavoidable. A shell script reaching into `.github/` is the visible cost of
+  keeping one canonical copy of both the values and the code that expands
+  them.

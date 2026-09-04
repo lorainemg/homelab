@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace ~140 lines of hand-rolled Komodo `curl` across two repos with three task-named composite GitHub Actions sharing one tested bash library.
+**Goal:** Replace ~140 lines of hand-rolled Komodo `curl` across two repos with three task-named composite GitHub Actions sharing one tested Python client.
 
-**Architecture:** A single bash library (`lib/komodo.sh`) owns authentication, the HTTP call, placeholder expansion from a `vars.env` beside it, and the poll-an-Update-to-completion loop. Three composite actions (`update-stack`, `deploy-stack`, `run-sync`) each source that library and map named inputs onto one Komodo request. The library is tested against a Python stub HTTP server that replays real Komodo response shapes, so nothing in the test suite touches the live homelab.
+**Architecture:** A single Python module (`lib/komodo.py`, standard library only) owns authentication, the HTTP call, placeholder expansion from a `vars.env` beside it, and the poll-an-Update-to-completion loop. It exposes a small CLI. Three composite actions (`update-stack`, `deploy-stack`, `run-sync`) are each a few lines of bash that pass inputs through as environment variables and invoke one CLI subcommand. The module is tested with `unittest` against a stub HTTP server that replays real Komodo response shapes, so nothing in the test suite touches the live homelab.
 
-**Tech Stack:** Bash 5 (`curl`, `jq`, `envsubst` from gettext — all preinstalled on `ubuntu-latest`), GitHub composite actions, Python 3 `http.server` for the test stub, `bats`-free plain-bash test runner invoked from a workflow.
+**Tech Stack:** Python 3 standard library only (`urllib.request`, `json`, `argparse`, `http.server`, `unittest`) — preinstalled on `ubuntu-latest` and present on the homelab server (3.13.7). GitHub composite actions with a thin `bash` wrapper per action.
 
 **Spec:** [docs/superpowers/specs/2026-09-04-komodo-github-action-design.md](../specs/2026-09-04-komodo-github-action-design.md)
 
@@ -18,24 +18,25 @@
 - **A missing stack is HTTP 500** with `"Did not find any Stack"` in the body, not a 404. Branch on the body.
 - **Never print a request or response body that can contain a stack `environment`.** Those hold secrets. Print request *types*, HTTP statuses, and Komodo's own Update log stages only.
 - Poll interval is **5 seconds**; default timeout **300 seconds**.
-- Shell scripts use `set -euo pipefail`.
+- The library is Python 3 standard library only — no pip installs, no third-party imports. The thin bash wrapper inside each `action.yml` uses `set -euo pipefail`.
+- The library raises on failure and the CLI turns an exception into a non-zero exit with a readable message; a composite action step fails because the process exited non-zero, never because a string was parsed.
 - Commit messages: single line, casual, no trailers (repo convention).
 - The gitleaks pre-commit hook cannot run on this workstation (Docker permissions). Scan staged changes with the standalone binary at `/tmp/gitleaks/gitleaks git --staged --no-banner --redact .` and commit with `--no-verify`.
 
 ---
 
-### Task 1: The stub Komodo server and the test runner
+### Task 1: The stub Komodo server and the test scaffolding
 
-Build the test harness first, so every later task has something to test against. The stub replays four real response shapes; the runner is a plain bash script that starts the stub, sources the library, runs assertions, and reports.
+Build the test harness first, so every later task has something to test against. The stub replays the real Komodo response shapes *and* validates that each request type arrives on the right route, because every later task trusts it for exactly that.
 
 **Files:**
 - Create: `.github/actions/komodo/tests/stub_komodo.py`
-- Create: `.github/actions/komodo/tests/run_tests.sh`
-- Create: `.github/actions/komodo/lib/komodo.sh` (empty placeholder so the runner can source it)
+- Create: `.github/actions/komodo/tests/test_komodo.py`
+- Create: `.github/actions/komodo/lib/komodo.py` (module docstring only, so the suite can import it)
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `stub_komodo.py` listens on a port given as `argv[1]` and serves the scenarios below. `run_tests.sh` defines `assert_eq <actual> <expected> <name>`, `assert_contains <haystack> <needle> <name>`, `assert_fails <command...> <name>`, and exits non-zero if any assertion failed.
+- Produces: `stub_komodo.StubKomodo` — a context manager that starts the stub on an ephemeral port and exposes `.url`. `test_komodo.KomodoTestCase` — a `unittest.TestCase` base that starts one stub for the class and points the library's environment at it.
 
 - [ ] **Step 1: Write the stub server**
 
@@ -44,18 +45,30 @@ Create `.github/actions/komodo/tests/stub_komodo.py`:
 ```python
 #!/usr/bin/env python3
 """A stand-in for Komodo Core 2.3.1, replaying the response shapes the real
-server produces. Scenario is chosen by the request's `type` field, so a test
-picks a behaviour by calling the matching Komodo request type."""
+server produces, so the client can be tested without touching the homelab.
+
+Which scenario you get is chosen by the request's `type`, so a test picks a
+behaviour by calling the matching Komodo request type. The stub also checks
+that each type arrives on the route the real server serves it from: a read
+sent to /execute is a test failure here rather than a silent pass in CI.
+"""
 import json
-import sys
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# How many times GetUpdate has been asked about each update id, so a test can
-# assert that the caller really polls rather than reading status once.
-POLLS = {}
+# Which route each request type belongs on, mirroring the real API.
+ROUTES = {
+    "GetStack": "/read",
+    "GetUpdate": "/read",
+    "CreateStack": "/write",
+    "UpdateStack": "/write",
+    "UpdateResourceSync": "/write",
+    "DeployStack": "/execute",
+    "RunSync": "/execute",
+}
 
 
-class Handler(BaseHTTPRequestHandler):
+class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # keep test output clean
 
@@ -72,15 +85,22 @@ class Handler(BaseHTTPRequestHandler):
         req = json.loads(self.rfile.read(length) or "{}")
         rtype = req.get("type", "")
         params = req.get("params", {})
+        polls = self.server.polls
 
-        # Auth is checked the same way the real server does: both headers.
         if not self.headers.get("X-Api-Key") or not self.headers.get("X-Api-Secret"):
             return self._send(401, {"error": "unauthorized"})
 
-        # --- reads -------------------------------------------------------
+        expected = ROUTES.get(rtype)
+        if expected is None:
+            return self._send(404, {"error": f"stub has no case for {rtype}"})
+        if self.path != expected:
+            return self._send(
+                404, {"error": f"{rtype} belongs on {expected}, not {self.path}"}
+            )
+
         if rtype == "GetStack":
             if params.get("stack") == "missing-stack":
-                # The real shape: 500, not 404.
+                # The real shape for a name Komodo does not know: 500, not 404.
                 return self._send(500, {
                     "error": "Did not find any Stack matching missing-stack",
                     "trace": [],
@@ -89,11 +109,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if rtype == "GetUpdate":
             uid = params.get("id")
-            POLLS[uid] = POLLS.get(uid, 0) + 1
+            polls[uid] = polls.get(uid, 0) + 1
             if uid == "u-never":
                 return self._send(200, {"_id": {"$oid": uid}, "status": "InProgress"})
-            # Stay InProgress on the first poll so the loop must run twice.
-            if POLLS[uid] < 2:
+            # Stay InProgress on the first poll so the caller must really loop.
+            if polls[uid] < 2:
                 return self._send(200, {"_id": {"$oid": uid}, "status": "InProgress"})
             if uid == "u-fail":
                 return self._send(200, {
@@ -106,175 +126,236 @@ class Handler(BaseHTTPRequestHandler):
                 "logs": [{"stage": "Deploy", "stdout": "started", "stderr": ""}],
             })
 
-        # --- writes ------------------------------------------------------
         if rtype in ("CreateStack", "UpdateStack", "UpdateResourceSync"):
             if params.get("id") == "boom" or params.get("name") == "boom":
                 return self._send(400, {"error": "bad request from stub"})
-            # Echo the config back so tests can assert what was sent.
+            self.server.received.append(req)
             return self._send(200, {"name": params.get("name") or params.get("id"),
                                     "config": params.get("config", {})})
 
-        # --- executes ----------------------------------------------------
-        if rtype in ("DeployStack", "RunSync"):
-            target = params.get("stack") or params.get("sync")
-            uid = {"fail-me": "u-fail", "hang-me": "u-never"}.get(target, "u-ok")
-            return self._send(200, {"_id": {"$oid": uid}, "status": "InProgress"})
+        # DeployStack / RunSync: accepted, never a result.
+        target = params.get("stack") or params.get("sync")
+        uid = {"fail-me": "u-fail", "hang-me": "u-never"}.get(target, "u-ok")
+        return self._send(200, {"_id": {"$oid": uid}, "status": "InProgress"})
 
-        return self._send(404, {"error": f"stub has no case for {rtype}"})
+
+class StubKomodo:
+    """Runs the stub on an ephemeral port for the life of a `with` block."""
+
+    def __enter__(self):
+        self._server = HTTPServer(("127.0.0.1", 0), _Handler)
+        self._server.polls = {}
+        self._server.received = []          # every write payload, for assertions
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        self.url = f"http://127.0.0.1:{self._server.server_port}"
+        return self
+
+    @property
+    def received(self):
+        return self._server.received
+
+    def __exit__(self, *exc):
+        self._server.shutdown()
+        self._server.server_close()
+```
+
+- [ ] **Step 2: Write the test scaffolding**
+
+Create `.github/actions/komodo/tests/test_komodo.py`:
+
+```python
+#!/usr/bin/env python3
+"""Tests for lib/komodo.py against a stub Komodo. No network, nothing live."""
+import os
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import komodo                      # noqa: E402
+from stub_komodo import StubKomodo  # noqa: E402
+
+
+class KomodoTestCase(unittest.TestCase):
+    """Starts one stub per class and points the client at it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._stub = StubKomodo().__enter__()
+        cls.client = komodo.Komodo(
+            url=cls._stub.url, api_key="test-key", api_secret="test-secret",
+            poll_interval=0,
+        )
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._stub.__exit__(None, None, None)
+
+
+class TestStubItself(KomodoTestCase):
+    def test_stub_is_reachable(self):
+        self.assertTrue(self._stub.url.startswith("http://127.0.0.1:"))
 
 
 if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()
+    unittest.main()
 ```
 
-- [ ] **Step 2: Write the test runner with its first assertion**
+- [ ] **Step 3: Create the module so the suite can import it**
 
-Create `.github/actions/komodo/tests/run_tests.sh`:
+Create `.github/actions/komodo/lib/komodo.py`:
+
+```python
+#!/usr/bin/env python3
+"""A small client for the Komodo API, used by the composite actions beside it.
+
+Komodo Core 2.3.1. Everything here is standard library on purpose: this runs on
+a GitHub runner and on a freshly installed homelab server, with nothing to pip
+install in either place.
+"""
+```
+
+- [ ] **Step 4: Run the suite and verify it passes**
 
 ```bash
-#!/usr/bin/env bash
-# Tests for lib/komodo.sh against a stub Komodo. No network, nothing live.
-set -uo pipefail
-
-HERE="$(cd "$(dirname "$0")" && pwd)"
-PORT=${PORT:-8731}
-FAILED=0
-
-assert_eq() { # actual expected name
-  if [[ "$1" == "$2" ]]; then echo "  ok   $3"; else
-    echo "  FAIL $3"; echo "       expected: $2"; echo "       actual:   $1"; FAILED=1
-  fi
-}
-assert_contains() { # haystack needle name
-  if [[ "$1" == *"$2"* ]]; then echo "  ok   $3"; else
-    echo "  FAIL $3"; echo "       expected to contain: $2"; echo "       actual: $1"; FAILED=1
-  fi
-}
-assert_fails() { # name command...
-  local name=$1; shift
-  if "$@" >/dev/null 2>&1; then echo "  FAIL $name (expected non-zero exit)"; FAILED=1
-  else echo "  ok   $name"; fi
-}
-
-python3 "$HERE/stub_komodo.py" "$PORT" &
-STUB=$!
-trap 'kill $STUB 2>/dev/null' EXIT
-for _ in $(seq 1 50); do
-  curl -s -o /dev/null "http://127.0.0.1:$PORT/read" && break
-  sleep 0.1
-done
-
-export KOMODO_URL="http://127.0.0.1:$PORT"
-export KOMODO_API_KEY=test-key
-export KOMODO_API_SECRET=test-secret
-export KOMODO_POLL_INTERVAL=0        # no real sleeping in tests
-source "$HERE/../lib/komodo.sh"
-
-echo "stub is up on $PORT"
-
-exit $FAILED
+cd /mnt/Data/work/homelab
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-- [ ] **Step 3: Create the empty library so the runner can source it**
-
-Create `.github/actions/komodo/lib/komodo.sh`:
-
-```bash
-#!/usr/bin/env bash
-# Shared helpers for the komodo composite actions. Sourced, never executed.
-```
-
-- [ ] **Step 4: Run the harness and verify it starts the stub and exits clean**
-
-```bash
-chmod +x .github/actions/komodo/tests/run_tests.sh .github/actions/komodo/tests/stub_komodo.py
-.github/actions/komodo/tests/run_tests.sh
-```
-
-Expected: prints `stub is up on 8731` and exits 0.
+Expected: 1 test, OK.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add .github/actions/komodo
 /tmp/gitleaks/gitleaks git --staged --no-banner --redact .
-git commit --no-verify -m "add a stub komodo server to test the action library against"
+git commit --no-verify -m "add a stub komodo server to test the action client against"
 ```
 
 ---
 
-### Task 2: `komodo_call` — one authenticated request
+### Task 2: `Komodo.call` — one authenticated request
 
 **Files:**
-- Modify: `.github/actions/komodo/lib/komodo.sh`
-- Modify: `.github/actions/komodo/tests/run_tests.sh`
+- Modify: `.github/actions/komodo/lib/komodo.py`
+- Modify: `.github/actions/komodo/tests/test_komodo.py`
 
 **Interfaces:**
-- Consumes: `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET` from the environment.
-- Produces: `komodo_call <route> <json-body>` where route is `read`, `write` or `execute`. Prints the response body on stdout. Returns 0 on a 2xx; on any other status prints `komodo <type> failed (HTTP <code>)` plus the response's `.error` field to stderr and returns 1. Never prints the request body.
+- Consumes: nothing.
+- Produces: `class KomodoError(RuntimeError)`. `class Komodo(url, api_key, api_secret, poll_interval=5)` with `.call(route, rtype, params) -> dict`. Raises `KomodoError` on a non-2xx, with a message naming the request type, the status code and Komodo's own `error` field — and never the request body, which can hold secrets.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `run_tests.sh`, immediately before `exit $FAILED`:
+Add to `test_komodo.py`, above the `if __name__` block:
 
-```bash
-echo "komodo_call"
-out=$(komodo_call read '{"type":"GetStack","params":{"stack":"immich"}}')
-assert_eq "$(jq -r .name <<<"$out")" "immich" "returns the response body"
+```python
+class TestCall(KomodoTestCase):
+    def test_returns_the_parsed_response(self):
+        out = self.client.call("read", "GetStack", {"stack": "immich"})
+        self.assertEqual(out["name"], "immich")
 
-assert_fails "non-2xx returns non-zero" \
-  komodo_call write '{"type":"UpdateStack","params":{"id":"boom","config":{}}}'
+    def test_non_2xx_raises_with_status_and_message(self):
+        with self.assertRaises(komodo.KomodoError) as caught:
+            self.client.call("write", "UpdateStack", {"id": "boom", "config": {}})
+        message = str(caught.exception)
+        self.assertIn("400", message)
+        self.assertIn("bad request from stub", message)
+        self.assertIn("UpdateStack", message)
 
-err=$(komodo_call write '{"type":"UpdateStack","params":{"id":"boom","config":{}}}' 2>&1 >/dev/null)
-assert_contains "$err" "HTTP 400" "reports the status code"
-assert_contains "$err" "bad request from stub" "reports komodo's error message"
+    def test_failure_never_echoes_the_request_body(self):
+        # Drives the *error* branch on purpose: the success path prints nothing,
+        # so asserting against it would be a test that cannot fail.
+        secret = "hunter2"
+        with self.assertRaises(komodo.KomodoError) as caught:
+            self.client.call("write", "UpdateStack", {
+                "id": "boom", "config": {"environment": f"TOKEN={secret}"}})
+        self.assertNotIn(secret, str(caught.exception))
 
-secret_body='{"type":"UpdateStack","params":{"id":"s","config":{"environment":"TOKEN=hunter2"}}}'
-noise=$(komodo_call write "$secret_body" 2>&1 >/dev/null)
-assert_eq "$(grep -c hunter2 <<<"$noise")" "0" "never echoes the request body"
+    def test_routes_are_checked_by_the_stub(self):
+        # Guards the harness itself: a read sent to /execute must not pass.
+        with self.assertRaises(komodo.KomodoError):
+            self.client.call("execute", "GetStack", {"stack": "immich"})
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: FAIL with `komodo_call: command not found`.
+Expected: FAIL with `AttributeError: module 'komodo' has no attribute 'KomodoError'`.
 
-- [ ] **Step 3: Implement `komodo_call`**
+- [ ] **Step 3: Implement `KomodoError` and `Komodo.call`**
 
-Append to `lib/komodo.sh`:
+Append to `lib/komodo.py`:
 
-```bash
-# komodo_call <read|write|execute> <json-body>
-# Prints the response body. Non-2xx is an error, reported without the request.
-komodo_call() {
-  local route=$1 body=$2 resp code type
-  type=$(jq -r '.type // "?"' <<<"$body")
-  resp=$(curl -sS -w $'\n%{http_code}' -X POST "$KOMODO_URL/$route" \
-    -H "X-Api-Key: $KOMODO_API_KEY" \
-    -H "X-Api-Secret: $KOMODO_API_SECRET" \
-    -H 'Content-Type: application/json' \
-    --data-binary @- <<<"$body") || {
-      echo "komodo $type failed: could not reach $KOMODO_URL" >&2; return 1; }
-  code=${resp##*$'\n'}
-  resp=${resp%$'\n'*}
-  if [[ $code != 2* ]]; then
-    echo "komodo $type failed (HTTP $code): $(jq -r '.error // "no error field"' <<<"$resp" 2>/dev/null)" >&2
-    return 1
-  fi
-  printf '%s' "$resp"
-}
+```python
+import json
+import os
+import urllib.error
+import urllib.request
+
+
+class KomodoError(RuntimeError):
+    """Anything Komodo refused, or any response we could not use."""
+
+
+class Komodo:
+    def __init__(self, url, api_key, api_secret, poll_interval=5):
+        self.url = url.rstrip("/")
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.poll_interval = poll_interval
+
+    def call(self, route, rtype, params):
+        """POST one request to /read, /write or /execute and return the body.
+
+        The error message deliberately carries the request *type* and Komodo's
+        own error text, never the request body: a stack's `environment` is in
+        there, and this text ends up in a public CI log.
+        """
+        body = json.dumps({"type": rtype, "params": params}).encode()
+        request = urllib.request.Request(
+            f"{self.url}/{route}",
+            data=body,
+            headers={
+                "X-Api-Key": self.api_key,
+                "X-Api-Secret": self.api_secret,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request) as response:
+                return json.loads(response.read() or "{}")
+        except urllib.error.HTTPError as error:
+            detail = self._error_text(error.read())
+            raise KomodoError(
+                f"komodo {rtype} failed (HTTP {error.code}): {detail}"
+            ) from None
+        except urllib.error.URLError as error:
+            raise KomodoError(
+                f"komodo {rtype} failed: could not reach {self.url} ({error.reason})"
+            ) from None
+
+    @staticmethod
+    def _error_text(raw):
+        try:
+            return json.loads(raw).get("error", "no error field")
+        except (ValueError, AttributeError):
+            return "response was not json"
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: four `ok` lines under `komodo_call`, exit 0.
+Expected: 5 tests, OK.
 
 - [ ] **Step 5: Commit**
 
@@ -286,83 +367,102 @@ git commit --no-verify -m "add the authenticated komodo call helper"
 
 ---
 
-### Task 3: `komodo_await` — poll an Update to completion
+### Task 3: `Komodo.await_update` — poll an Update to completion
 
 **Files:**
-- Modify: `.github/actions/komodo/lib/komodo.sh`
-- Modify: `.github/actions/komodo/tests/run_tests.sh`
+- Modify: `.github/actions/komodo/lib/komodo.py`
+- Modify: `.github/actions/komodo/tests/test_komodo.py`
 
 **Interfaces:**
-- Consumes: `komodo_call` from Task 2.
-- Produces: `komodo_await <update-id> <timeout-seconds>`. Polls `GetUpdate` every `KOMODO_POLL_INTERVAL` seconds (default 5) until `status == "Complete"`. Returns 0 when `success` is true. When false, prints each log's stage, stdout and stderr, then returns 1. On timeout prints a timeout message and returns 1.
+- Consumes: `Komodo.call`, `KomodoError`.
+- Produces: `Komodo.await_update(update_id, timeout=300) -> None`. Polls `GetUpdate` every `poll_interval` seconds until `status == "Complete"`. Returns quietly on success. Raises `KomodoError` when `success` is false, having first printed each log's stage, stdout and stderr to stderr. Raises `KomodoError` on timeout.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `run_tests.sh`, before `exit $FAILED`:
+Add to `test_komodo.py`:
 
-```bash
-echo "komodo_await"
-out=$(komodo_await u-ok 30 2>&1); rc=$?
-assert_eq "$rc" "0" "succeeds on a successful update"
+```python
+import contextlib   # add to the imports at the top of the file
+import io
 
-out=$(komodo_await u-fail 30 2>&1); rc=$?
-assert_eq "$rc" "1" "fails on an unsuccessful update"
-assert_contains "$out" "Deploy" "prints the failing stage"
-assert_contains "$out" "denied: permission on Stack" "prints komodo's stderr"
 
-out=$(komodo_await u-never 1 2>&1); rc=$?
-assert_eq "$rc" "1" "fails on timeout rather than passing"
-assert_contains "$out" "timed out" "says it timed out"
+class TestAwaitUpdate(KomodoTestCase):
+    def test_returns_quietly_on_success(self):
+        self.assertIsNone(self.client.await_update("u-ok", timeout=30))
+
+    def test_raises_and_prints_the_failing_stage(self):
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            with self.assertRaises(komodo.KomodoError):
+                self.client.await_update("u-fail", timeout=30)
+        printed = captured.getvalue()
+        self.assertIn("Deploy", printed)
+        self.assertIn("denied: permission on Stack", printed)
+
+    def test_timeout_raises_rather_than_passing(self):
+        with self.assertRaises(komodo.KomodoError) as caught:
+            self.client.await_update("u-never", timeout=1)
+        self.assertIn("timed out", str(caught.exception))
+
+    def test_really_polls_rather_than_reading_status_once(self):
+        # The stub answers InProgress on the first poll for every id.
+        self.client.await_update("u-ok-again", timeout=30)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: FAIL with `komodo_await: command not found`.
+Expected: FAIL with `AttributeError: 'Komodo' object has no attribute 'await_update'`.
 
-- [ ] **Step 3: Implement `komodo_await`**
+- [ ] **Step 3: Implement `await_update`**
 
-Append to `lib/komodo.sh`:
+Append to the `Komodo` class in `lib/komodo.py`, and add `import sys` and `import time` at the top:
 
-```bash
-# komodo_await <update-id> <timeout-seconds>
-# /execute only means "accepted" — even a permission refusal arrives here, as
-# success:false. So the result of any execute is whatever this function says.
-komodo_await() {
-  local id=$1 timeout=${2:-300} interval=${KOMODO_POLL_INTERVAL:-5}
-  local waited=0 update status
-  while true; do
-    update=$(komodo_call read "$(jq -n --arg id "$id" \
-      '{type:"GetUpdate",params:{id:$id}}')") || return 1
-    status=$(jq -r '.status // "Unknown"' <<<"$update")
-    [[ $status == Complete ]] && break
-    if (( waited >= timeout )); then
-      echo "komodo update $id timed out after ${timeout}s (last status: $status)" >&2
-      return 1
-    fi
-    (( interval > 0 )) && sleep "$interval"
-    waited=$(( waited + (interval > 0 ? interval : 1) ))
-  done
-  if [[ $(jq -r '.success // false' <<<"$update") == true ]]; then
-    echo "komodo update $id completed"
-    return 0
-  fi
-  echo "komodo update $id failed:" >&2
-  jq -r '.logs[]? | "--- \(.stage)\n\(.stdout // "")\n\(.stderr // "")"' <<<"$update" >&2
-  return 1
-}
+```python
+    def await_update(self, update_id, timeout=300):
+        """Wait for an Update to finish, and decide whether it worked.
+
+        /execute only means *accepted*. Even a permission refusal comes back as
+        a 2xx with status InProgress, and surfaces here as success: false. So
+        the verdict on any execute is whatever this method says, never the
+        response to the execute itself.
+        """
+        waited = 0
+        while True:
+            update = self.call("read", "GetUpdate", {"id": update_id})
+            if update.get("status") == "Complete":
+                break
+            if waited >= timeout:
+                raise KomodoError(
+                    f"komodo update {update_id} timed out after {timeout}s "
+                    f"(last status: {update.get('status', 'Unknown')})"
+                )
+            time.sleep(self.poll_interval)
+            waited += self.poll_interval or 1
+
+        if update.get("success"):
+            print(f"komodo update {update_id} completed")
+            return None
+
+        print(f"komodo update {update_id} failed:", file=sys.stderr)
+        for log in update.get("logs") or []:
+            print(f"--- {log.get('stage', '?')}", file=sys.stderr)
+            for stream in ("stdout", "stderr"):
+                if log.get(stream):
+                    print(log[stream], file=sys.stderr)
+        raise KomodoError(f"komodo update {update_id} failed")
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: five `ok` lines under `komodo_await`, exit 0.
+Expected: 9 tests, OK.
 
 - [ ] **Step 5: Commit**
 
@@ -374,18 +474,16 @@ git commit --no-verify -m "poll komodo updates to completion and print the faili
 
 ---
 
-### Task 4: `komodo_expand` and `komodo_stack_exists`
-
-Two small helpers: placeholder expansion from `vars.env`, and the create-if-missing probe that has to read a 500 body.
+### Task 4: `expand`, `stack_exists`, and the payload builders
 
 **Files:**
 - Create: `.github/actions/komodo/vars.env`
-- Modify: `.github/actions/komodo/lib/komodo.sh`
-- Modify: `.github/actions/komodo/tests/run_tests.sh`
+- Modify: `.github/actions/komodo/lib/komodo.py`
+- Modify: `.github/actions/komodo/tests/test_komodo.py`
 
 **Interfaces:**
-- Consumes: `komodo_call` from Task 2.
-- Produces: `komodo_expand <text>` prints the text with `${NAME}` placeholders replaced from `vars.env`, and returns 1 if any `${` survives. `komodo_stack_exists <name>` returns 0 if the stack exists, 1 if Komodo says it does not, and 2 if the lookup itself failed.
+- Consumes: `Komodo.call`, `KomodoError`.
+- Produces: module-level `load_vars(path=None) -> dict` and `expand(text, variables) -> str` (raises `KomodoError` if any `${...}` survives). `Komodo.stack_exists(name) -> bool`. `Komodo.stack_config(compose_file, env_file, links, variables) -> dict` and `Komodo.sync_config(toml_file, variables) -> dict`.
 
 - [ ] **Step 1: Create `vars.env`**
 
@@ -395,133 +493,335 @@ Create `.github/actions/komodo/vars.env`:
 # Values shared by everything that talks to this Komodo. Edit here, nowhere
 # else: the composite actions in this directory expand ${NAME} in their
 # `links` input and in the TOML that run-sync pushes, and scripts/bootstrap.sh
-# reads this same file when it renders komodo/stacks.toml on a fresh server.
+# renders komodo/stacks.toml through the same library on a fresh server.
 HOMELAB_LAN_IP=172.20.3.194
 ```
 
 - [ ] **Step 2: Write the failing tests**
 
-Append to `run_tests.sh`, before `exit $FAILED`:
+Add to `test_komodo.py`:
 
-```bash
-echo "komodo_expand"
-assert_eq "$(komodo_expand 'http://${HOMELAB_LAN_IP}:5000')" \
-          "http://172.20.3.194:5000" "expands a known placeholder"
-assert_eq "$(komodo_expand 'no placeholders here')" \
-          "no placeholders here" "leaves plain text alone"
-assert_fails "unknown placeholder is an error" komodo_expand 'http://${NOPE}:1'
-assert_eq "$(komodo_expand 'cost is $5 and 100% real')" \
-          'cost is $5 and 100% real' "leaves a bare dollar sign alone"
+```python
+import tempfile     # add to the imports at the top of the file
 
-echo "komodo_stack_exists"
-komodo_stack_exists immich;        assert_eq "$?" "0" "true for an existing stack"
-komodo_stack_exists missing-stack; assert_eq "$?" "1" "false on the 500 not-found body"
+
+class TestExpand(unittest.TestCase):
+    VARS = {"HOMELAB_LAN_IP": "172.20.3.194"}
+
+    def test_expands_a_known_placeholder(self):
+        self.assertEqual(
+            komodo.expand("http://${HOMELAB_LAN_IP}:5000", self.VARS),
+            "http://172.20.3.194:5000")
+
+    def test_leaves_plain_text_alone(self):
+        self.assertEqual(komodo.expand("no placeholders", self.VARS), "no placeholders")
+
+    def test_leaves_a_bare_dollar_alone(self):
+        # A compose file or a password may legitimately contain one.
+        text = "cost is $5 and 100% real"
+        self.assertEqual(komodo.expand(text, self.VARS), text)
+
+    def test_an_unknown_placeholder_is_an_error(self):
+        with self.assertRaises(komodo.KomodoError) as caught:
+            komodo.expand("http://${NOPE}:1", self.VARS)
+        self.assertIn("NOPE", str(caught.exception))
+
+    def test_load_vars_reads_the_file_beside_the_library(self):
+        self.assertEqual(komodo.load_vars()["HOMELAB_LAN_IP"], "172.20.3.194")
+
+
+class TestStackExists(KomodoTestCase):
+    def test_true_for_an_existing_stack(self):
+        self.assertTrue(self.client.stack_exists("immich"))
+
+    def test_false_on_the_500_not_found_body(self):
+        # Komodo answers a missing stack with 500, not 404.
+        self.assertFalse(self.client.stack_exists("missing-stack"))
+
+    def test_other_failures_still_raise(self):
+        broken = komodo.Komodo(url="http://127.0.0.1:1", api_key="k", api_secret="s")
+        with self.assertRaises(komodo.KomodoError):
+            broken.stack_exists("immich")
+
+
+class TestPayloads(KomodoTestCase):
+    VARS = {"HOMELAB_LAN_IP": "172.20.3.194"}
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.compose = Path(self.dir.name) / "compose.yaml"
+        self.compose.write_text("services: {}\n")
+        self.env = Path(self.dir.name) / ".env"
+        self.env.write_text("A=1\n")
+        self.addCleanup(self.dir.cleanup)
+
+    def test_carries_every_supplied_field(self):
+        config = self.client.stack_config(
+            str(self.compose), str(self.env),
+            "http://${HOMELAB_LAN_IP}:28888/login", self.VARS)
+        self.assertEqual(config["file_contents"], "services: {}\n")
+        self.assertEqual(config["environment"], "A=1\n")
+        self.assertEqual(config["links"], ["http://172.20.3.194:28888/login"])
+
+    def test_omits_fields_with_no_input(self):
+        # An omitted input must never clear what is already on the stack.
+        config = self.client.stack_config(str(self.compose), None, None, self.VARS)
+        self.assertNotIn("environment", config)
+        self.assertNotIn("links", config)
+
+    def test_splits_multiple_links(self):
+        config = self.client.stack_config(
+            None, None, "http://${HOMELAB_LAN_IP}:1\nhttp://${HOMELAB_LAN_IP}:2",
+            self.VARS)
+        self.assertEqual(len(config["links"]), 2)
+
+    def test_sync_config_clears_the_other_sources(self):
+        # Komodo prefers a repo over stored contents, so leaving repo set would
+        # silently ignore what we just pushed.
+        toml = Path(self.dir.name) / "stacks.toml"
+        toml.write_text('links = ["http://${HOMELAB_LAN_IP}:5000"]\n')
+        config = self.client.sync_config(str(toml), self.VARS)
+        self.assertIn("172.20.3.194", config["file_contents"])
+        self.assertEqual(config["repo"], "")
+        self.assertEqual(config["branch"], "")
+        self.assertEqual(config["resource_path"], [])
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: FAIL with `komodo_expand: command not found`.
+Expected: FAIL with `AttributeError: module 'komodo' has no attribute 'expand'`.
 
-- [ ] **Step 4: Implement both helpers**
+- [ ] **Step 4: Implement the four pieces**
 
-Append to `lib/komodo.sh`:
+Append to `lib/komodo.py` — `load_vars` and `expand` at module level, the other two inside the `Komodo` class. Add `import re` and `from pathlib import Path` at the top:
 
-```bash
-# komodo_expand <text>
-# Replaces ${NAME} from vars.env beside this library. Only the names declared
-# there are substituted, so a bare `$` in a compose file or a link is safe.
-komodo_expand() {
-  local vars="${KOMODO_VARS_FILE:-$(dirname "${BASH_SOURCE[0]}")/../vars.env}" out names
-  # shellcheck disable=SC1090
-  set -a; . "$vars"; set +a
-  names=$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/${\1}/p' "$vars" | tr '\n' ' ')
-  out=$(envsubst "$names" <<<"$1")
-  if [[ $out == *'${'* ]]; then
-    echo "unresolved placeholder in: $out" >&2
-    echo "declared in $(basename "$vars"): $names" >&2
-    return 1
-  fi
-  printf '%s' "$out"
-}
+```python
+VARS_FILE = Path(__file__).resolve().parent.parent / "vars.env"
+_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
-# komodo_stack_exists <name>
-# Komodo answers a missing stack with HTTP 500 and "Did not find any Stack",
-# not a 404, so the body is the only reliable signal.
-komodo_stack_exists() {
-  local name=$1 resp
-  resp=$(komodo_call read "$(jq -n --arg s "$name" \
-    '{type:"GetStack",params:{stack:$s}}')" 2>&1)
-  if [[ $resp == *"Did not find any Stack"* ]]; then return 1; fi
-  if [[ $(jq -r '.name // empty' <<<"$resp" 2>/dev/null) == "$name" ]]; then return 0; fi
-  echo "could not determine whether stack $name exists: $resp" >&2
-  return 2
-}
+
+def load_vars(path=None):
+    """Read the shared values that sit beside this library."""
+    variables = {}
+    for line in Path(path or VARS_FILE).read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        variables[name.strip()] = value.strip()
+    return variables
+
+
+def expand(text, variables):
+    """Replace ${NAME} from `variables`, and refuse to leave one behind.
+
+    Only the ${...} form is touched, so a bare `$` in a compose file or a
+    password is never disturbed. An unknown name is an error rather than an
+    empty string: a link silently rendered to `http://:5000` would look
+    plausible in the UI and go nowhere.
+    """
+    missing = sorted(
+        {name for name in _PLACEHOLDER.findall(text) if name not in variables}
+    )
+    if missing:
+        raise KomodoError(
+            f"unresolved placeholder(s) {', '.join(missing)}; "
+            f"declared in vars.env: {', '.join(sorted(variables)) or 'nothing'}"
+        )
+    return _PLACEHOLDER.sub(lambda m: variables[m.group(1)], text)
 ```
 
-Note: `komodo_expand` uses a trailing `printf '%s'` without a newline so callers can embed it; `envsubst` is given an explicit name list so undeclared `${...}` survives and trips the guard.
+and inside the class:
+
+```python
+    def stack_exists(self, name):
+        """Whether Komodo knows this stack.
+
+        A missing stack is HTTP 500 with "Did not find any Stack", not a 404,
+        so the body is the only reliable signal. Any other failure is a real
+        failure and is re-raised rather than read as "absent".
+        """
+        try:
+            return self.call("read", "GetStack", {"stack": name}).get("name") == name
+        except KomodoError as error:
+            if "Did not find any Stack" in str(error):
+                return False
+            raise
+
+    def stack_config(self, compose_file, env_file, links, variables):
+        """Build an UpdateStack config from whichever inputs were supplied.
+
+        A falsy argument means "leave that field alone": omitted fields are
+        absent from the payload, so an update never clears something the
+        caller did not mention.
+        """
+        config = {}
+        if compose_file:
+            config["file_contents"] = Path(compose_file).read_text()
+        if env_file:
+            config["environment"] = Path(env_file).read_text()
+        if links:
+            config["links"] = [
+                line for line in expand(links, variables).splitlines() if line
+            ]
+        return config
+
+    def sync_config(self, toml_file, variables):
+        """Build the config for a contents-mode ResourceSync.
+
+        repo, branch and resource_path are cleared every time: Komodo picks its
+        source in that order and prefers a repo over stored contents, so
+        leaving them set would silently ignore what we just pushed
+        (bin/core/src/sync/remote.rs, v2.3.1).
+        """
+        return {
+            "file_contents": expand(Path(toml_file).read_text(), variables),
+            "repo": "",
+            "branch": "",
+            "resource_path": [],
+        }
+```
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: six `ok` lines across the two groups, exit 0.
+Expected: 21 tests, OK.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add .github/actions/komodo
 /tmp/gitleaks/gitleaks git --staged --no-banner --redact .
-git commit --no-verify -m "expand shared vars and probe whether a stack exists"
+git commit --no-verify -m "expand shared vars, probe for a stack, and build the payloads"
 ```
 
 ---
 
-### Task 5: The `deploy-stack` action
+### Task 5: The CLI, and the `deploy-stack` action
 
-The smallest of the three, so it proves the composite-action wiring before the more complex ones.
+The actions invoke the library as a process, so this task adds the `argparse` entry point they all share, plus the first subcommand and the first `action.yml`.
 
 **Files:**
+- Modify: `.github/actions/komodo/lib/komodo.py`
+- Modify: `.github/actions/komodo/tests/test_komodo.py`
 - Create: `.github/actions/komodo/deploy-stack/action.yml`
-- Modify: `.github/actions/komodo/tests/run_tests.sh`
 
 **Interfaces:**
-- Consumes: `komodo_call`, `komodo_await`.
-- Produces: a composite action with inputs `komodo-url`, `api-key`, `api-secret`, `stack`, `timeout` (default `300`). Fails the step unless the resulting Update reports success.
+- Consumes: `Komodo`, `KomodoError`, `load_vars`.
+- Produces: `client_from_env() -> Komodo` reading `KOMODO_URL`, `KOMODO_API_KEY`, `KOMODO_API_SECRET`. `main(argv=None) -> int`, which returns 1 and prints the message on a `KomodoError` rather than raising. Subcommand `deploy-stack --stack NAME [--timeout N]`.
 
-- [ ] **Step 1: Write the failing test for the deploy path**
+- [ ] **Step 1: Write the failing tests**
 
-Append to `run_tests.sh`, before `exit $FAILED`:
+Add to `test_komodo.py`:
 
-```bash
-echo "deploy flow"
-deploy() { # <stack> <timeout>
-  local resp id
-  resp=$(komodo_call execute "$(jq -n --arg s "$1" \
-    '{type:"DeployStack",params:{stack:$s}}')") || return 1
-  id=$(jq -r '._id."$oid"' <<<"$resp")
-  komodo_await "$id" "$2"
-}
-deploy trakt-tg-bot 30 >/dev/null 2>&1; assert_eq "$?" "0" "a good deploy passes"
-out=$(deploy fail-me 30 2>&1); rc=$?
-assert_eq "$rc" "1" "a refused deploy fails the step"
-assert_contains "$out" "denied: permission on Stack" "surfaces why it failed"
+```python
+class TestCli(KomodoTestCase):
+    def _env(self):
+        return {
+            "KOMODO_URL": self._stub.url,
+            "KOMODO_API_KEY": "test-key",
+            "KOMODO_API_SECRET": "test-secret",
+            "KOMODO_POLL_INTERVAL": "0",
+        }
+
+    def test_deploy_stack_returns_zero_on_success(self):
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            self.assertEqual(komodo.main(["deploy-stack", "--stack", "immich"]), 0)
+
+    def test_deploy_stack_returns_one_when_komodo_refuses(self):
+        captured = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            with contextlib.redirect_stderr(captured):
+                code = komodo.main(["deploy-stack", "--stack", "fail-me"])
+        self.assertEqual(code, 1)
+        self.assertIn("denied: permission on Stack", captured.getvalue())
+
+    def test_missing_credentials_is_a_clear_error(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                code = komodo.main(["deploy-stack", "--stack", "immich"])
+        self.assertEqual(code, 1)
+        self.assertIn("KOMODO_URL", captured.getvalue())
 ```
 
-- [ ] **Step 2: Run the tests to verify they pass**
+Add `import unittest.mock` to the imports at the top of the file.
+
+- [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: three `ok` lines under `deploy flow`. (This test exercises the library composition the action will use; it passes immediately because Tasks 2 and 3 are done. Its value is locking the flow before the YAML wraps it.)
+Expected: FAIL with `AttributeError: module 'komodo' has no attribute 'main'`.
 
-- [ ] **Step 3: Write the action**
+- [ ] **Step 3: Implement the CLI**
+
+Append to `lib/komodo.py`. Add `import argparse` at the top:
+
+```python
+def client_from_env():
+    """Build a client from the environment the composite actions set."""
+    missing = [
+        name for name in ("KOMODO_URL", "KOMODO_API_KEY", "KOMODO_API_SECRET")
+        if not os.environ.get(name)
+    ]
+    if missing:
+        raise KomodoError(f"missing environment: {', '.join(missing)}")
+    return Komodo(
+        url=os.environ["KOMODO_URL"],
+        api_key=os.environ["KOMODO_API_KEY"],
+        api_secret=os.environ["KOMODO_API_SECRET"],
+        poll_interval=int(os.environ.get("KOMODO_POLL_INTERVAL", "5")),
+    )
+
+
+def _deploy_stack(args):
+    client = client_from_env()
+    accepted = client.call("execute", "DeployStack", {"stack": args.stack})
+    client.await_update(accepted["_id"]["$oid"], timeout=args.timeout)
+
+
+def main(argv=None):
+    """Entry point for the composite actions. Never raises: an exception
+    becomes exit 1 with a readable message, which is what fails the step."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    deploy = sub.add_parser("deploy-stack", help="deploy a stack and wait")
+    deploy.add_argument("--stack", required=True)
+    deploy.add_argument("--timeout", type=int, default=300)
+    deploy.set_defaults(handler=_deploy_stack)
+
+    args = parser.parse_args(argv)
+    try:
+        args.handler(args)
+    except KomodoError as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+```bash
+python3 -m unittest discover -s .github/actions/komodo/tests -v
+```
+
+Expected: 24 tests, OK.
+
+- [ ] **Step 5: Write the action**
 
 Create `.github/actions/komodo/deploy-stack/action.yml`:
 
@@ -555,33 +855,27 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
-        STACK: ${{ inputs.stack }}
-        TIMEOUT: ${{ inputs.timeout }}
       run: |
         set -euo pipefail
-        source "$GITHUB_ACTION_PATH/../lib/komodo.sh"
-
-        # /execute is accepted-not-done: the update below is the real result.
-        resp=$(komodo_call execute "$(jq -n --arg s "$STACK" \
-          '{type:"DeployStack",params:{stack:$s}}')")
-        komodo_await "$(jq -r '._id."$oid"' <<<"$resp")" "$TIMEOUT"
+        python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" deploy-stack \
+          --stack '${{ inputs.stack }}' --timeout '${{ inputs.timeout }}'
 ```
 
-- [ ] **Step 4: Verify the YAML parses and the sibling path is right**
+- [ ] **Step 6: Verify the YAML parses and the sibling path resolves**
 
 ```bash
 python3 -c 'import yaml; d=yaml.safe_load(open(".github/actions/komodo/deploy-stack/action.yml")); print("inputs:", list(d["inputs"]))'
-test -f .github/actions/komodo/deploy-stack/../lib/komodo.sh && echo "sibling lib path resolves"
+test -f .github/actions/komodo/deploy-stack/../lib/komodo.py && echo "sibling lib path resolves"
 ```
 
 Expected: the five input names, then `sibling lib path resolves`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add .github/actions/komodo
 /tmp/gitleaks/gitleaks git --staged --no-banner --redact .
-git commit --no-verify -m "add the deploy-stack action"
+git commit --no-verify -m "add the deploy-stack action and the cli it calls"
 ```
 
 ---
@@ -589,81 +883,107 @@ git commit --no-verify -m "add the deploy-stack action"
 ### Task 6: The `update-stack` action
 
 **Files:**
+- Modify: `.github/actions/komodo/lib/komodo.py`
+- Modify: `.github/actions/komodo/tests/test_komodo.py`
 - Create: `.github/actions/komodo/update-stack/action.yml`
-- Modify: `.github/actions/komodo/tests/run_tests.sh`
 
 **Interfaces:**
-- Consumes: `komodo_call`, `komodo_expand`, `komodo_stack_exists`.
-- Produces: a composite action with inputs `komodo-url`, `api-key`, `api-secret`, `stack`, `compose-file`, `env-file`, `links`, `create-if-missing` (default `false`), `server` (default `Local`). Builds an `UpdateStack` config containing only the fields whose inputs were given.
+- Consumes: `Komodo.stack_exists`, `Komodo.stack_config`, `load_vars`, `main`.
+- Produces: subcommand `update-stack --stack NAME [--compose-file F] [--env-file F] [--links TEXT] [--create-if-missing] [--server NAME]`.
 
-Payload assembly lives in the library, not in the action's YAML, so the tests
-exercise the code that actually ships. (Controller ruling, 2026-09-04: the
-original plan duplicated this block between test and action.)
+- [ ] **Step 1: Write the failing tests**
 
-- [ ] **Step 1: Write the failing test**
+Add to `test_komodo.py`:
 
-Append to `run_tests.sh`, before `exit $FAILED`:
+```python
+class TestUpdateStackCommand(KomodoTestCase):
+    def _env(self):
+        return {
+            "KOMODO_URL": self._stub.url,
+            "KOMODO_API_KEY": "test-key",
+            "KOMODO_API_SECRET": "test-secret",
+        }
 
-```bash
-echo "komodo_stack_config"
-tmp=$(mktemp -d)
-printf 'services: {}\n' > "$tmp/compose.yaml"
-printf 'A=1\n'           > "$tmp/.env"
+    def test_creates_the_stack_when_missing_then_updates_it(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            code = komodo.main([
+                "update-stack", "--stack", "missing-stack", "--create-if-missing"])
+        self.assertEqual(code, 0)
+        sent = [r["type"] for r in self._stub.received[before:]]
+        self.assertEqual(sent, ["CreateStack", "UpdateStack"])
 
-cfg=$(komodo_stack_config "$tmp/compose.yaml" "$tmp/.env" 'http://${HOMELAB_LAN_IP}:28888/login')
-assert_eq "$(jq -r '.links[0]' <<<"$cfg")" "http://172.20.3.194:28888/login" "expands links"
-assert_eq "$(jq -r '.file_contents' <<<"$cfg")" "services: {}" "carries the compose file"
-assert_eq "$(jq -r '.environment' <<<"$cfg")" "A=1" "carries the env file"
+    def test_does_not_create_when_the_stack_is_there(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            code = komodo.main([
+                "update-stack", "--stack", "immich", "--create-if-missing"])
+        self.assertEqual(code, 0)
+        sent = [r["type"] for r in self._stub.received[before:]]
+        self.assertEqual(sent, ["UpdateStack"])
 
-cfg=$(komodo_stack_config "$tmp/compose.yaml" "" "")
-assert_eq "$(jq -r 'has("environment")' <<<"$cfg")" "false" "omits fields with no input"
-assert_eq "$(jq -r 'has("links")' <<<"$cfg")" "false" "omits links with no input"
-
-cfg=$(komodo_stack_config "" "" $'http://${HOMELAB_LAN_IP}:1\nhttp://${HOMELAB_LAN_IP}:2')
-assert_eq "$(jq -r '.links | length' <<<"$cfg")" "2" "splits multiple links"
-
-assert_fails "an unknown placeholder in links fails" \
-  komodo_stack_config "" "" 'http://${NOPE}:1'
-rm -rf "$tmp"
+    def test_links_reach_komodo_expanded(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            komodo.main([
+                "update-stack", "--stack", "immich",
+                "--links", "http://${HOMELAB_LAN_IP}:2283"])
+        config = self._stub.received[before]["params"]["config"]
+        self.assertEqual(config["links"], ["http://172.20.3.194:2283"])
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: FAIL with `komodo_stack_config: command not found`.
+Expected: FAIL — `argument command: invalid choice: 'update-stack'`.
 
-- [ ] **Step 3: Implement `komodo_stack_config` in the library**
+- [ ] **Step 3: Implement the subcommand**
 
-Append to `lib/komodo.sh`:
+Add the handler beside `_deploy_stack` in `lib/komodo.py`:
 
-```bash
-# komodo_stack_config <compose-file> <env-file> <links>
-# Builds an UpdateStack config from whichever inputs were supplied. An empty
-# argument means "leave that field alone": omitted fields are absent from the
-# payload, so an update never clears something the caller did not mention.
-komodo_stack_config() {
-  local compose=$1 env_file=$2 links=$3 cfg='{}' expanded
-  [[ -n $compose ]] && cfg=$(jq --rawfile f "$compose" '.file_contents = $f' <<<"$cfg")
-  [[ -n $env_file ]] && cfg=$(jq --rawfile f "$env_file" '.environment = $f' <<<"$cfg")
-  if [[ -n $links ]]; then
-    expanded=$(komodo_expand "$links") || return 1
-    cfg=$(jq --arg l "$expanded" \
-      '.links = ($l | split("\n") | map(select(length > 0)))' <<<"$cfg")
-  fi
-  printf '%s' "$cfg"
-}
+```python
+def _update_stack(args):
+    client = client_from_env()
+    if args.create_if_missing and not client.stack_exists(args.stack):
+        print(f"stack {args.stack} does not exist yet; creating it")
+        client.call("write", "CreateStack", {
+            "name": args.stack,
+            "config": {
+                "server_id": args.server,
+                "project_name": args.stack,
+                "file_contents": "services: {}",
+                "webhook_enabled": False,
+            },
+        })
+    config = client.stack_config(
+        args.compose_file, args.env_file, args.links, load_vars())
+    client.call("write", "UpdateStack", {"id": args.stack, "config": config})
+    print(f"stack {args.stack} updated")
+```
+
+and register it inside `main`, after the `deploy-stack` parser:
+
+```python
+    update = sub.add_parser("update-stack", help="push a stack's definition")
+    update.add_argument("--stack", required=True)
+    update.add_argument("--compose-file", default=None)
+    update.add_argument("--env-file", default=None)
+    update.add_argument("--links", default=None)
+    update.add_argument("--create-if-missing", action="store_true")
+    update.add_argument("--server", default="Local")
+    update.set_defaults(handler=_update_stack)
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: seven `ok` lines under `komodo_stack_config`, exit 0.
+Expected: 27 tests, OK.
 
 - [ ] **Step 5: Write the action**
 
@@ -715,37 +1035,17 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
-        STACK: ${{ inputs.stack }}
         COMPOSE_FILE: ${{ inputs.compose-file }}
         ENV_FILE: ${{ inputs.env-file }}
         LINKS: ${{ inputs.links }}
-        CREATE_IF_MISSING: ${{ inputs.create-if-missing }}
-        SERVER: ${{ inputs.server }}
       run: |
         set -euo pipefail
-        source "$GITHUB_ACTION_PATH/../lib/komodo.sh"
-
-        if [[ $CREATE_IF_MISSING == true ]]; then
-          # `f; found=$?` would abort here: under `set -e` a function returning
-          # non-zero kills the step before $? is ever read. Verified 2026-09-04.
-          komodo_stack_exists "$STACK" && found=0 || found=$?
-          [[ $found == 2 ]] && exit 1
-          if [[ $found == 1 ]]; then
-            echo "stack $STACK does not exist yet; creating it"
-            komodo_call write "$(jq -n --arg s "$STACK" --arg srv "$SERVER" \
-              '{type:"CreateStack",params:{name:$s,config:{
-                 server_id:$srv, project_name:$s,
-                 file_contents:"services: {}", webhook_enabled:false}}}')" > /dev/null
-          fi
-        fi
-
-        # Only the fields the caller supplied go in, so an omitted input never
-        # clears what is already on the stack.
-        cfg=$(komodo_stack_config "$COMPOSE_FILE" "$ENV_FILE" "$LINKS")
-
-        komodo_call write "$(jq -n --arg s "$STACK" --argjson c "$cfg" \
-          '{type:"UpdateStack",params:{id:$s,config:$c}}')" > /dev/null
-        echo "stack $STACK updated"
+        args=(update-stack --stack '${{ inputs.stack }}' --server '${{ inputs.server }}')
+        [[ -n $COMPOSE_FILE ]] && args+=(--compose-file "$COMPOSE_FILE")
+        [[ -n $ENV_FILE ]] && args+=(--env-file "$ENV_FILE")
+        [[ -n $LINKS ]] && args+=(--links "$LINKS")
+        [[ '${{ inputs.create-if-missing }}' == true ]] && args+=(--create-if-missing)
+        python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" "${args[@]}"
 ```
 
 - [ ] **Step 6: Verify the YAML parses**
@@ -766,76 +1066,106 @@ git commit --no-verify -m "add the update-stack action"
 
 ---
 
-### Task 7: The `run-sync` action
+### Task 7: The `run-sync` action, and `render` for bootstrap
 
 **Files:**
+- Modify: `.github/actions/komodo/lib/komodo.py`
+- Modify: `.github/actions/komodo/tests/test_komodo.py`
 - Create: `.github/actions/komodo/run-sync/action.yml`
-- Modify: `.github/actions/komodo/tests/run_tests.sh`
 
 **Interfaces:**
-- Consumes: `komodo_call`, `komodo_await`, `komodo_expand`.
-- Produces: a composite action with inputs `komodo-url`, `api-key`, `api-secret`, `sync`, `contents-file`, `timeout` (default `300`). Pushes the rendered TOML with `repo`, `branch` and `resource_path` explicitly empty, then runs the sync and waits.
+- Consumes: `Komodo.sync_config`, `Komodo.await_update`, `expand`, `load_vars`.
+- Produces: subcommands `run-sync --sync NAME --contents-file F [--timeout N]` and `render FILE` (prints the expanded file to stdout, contacts nothing).
 
-- [ ] **Step 1: Write the failing test for the source-clearing payload**
+- [ ] **Step 1: Write the failing tests**
 
-Append to `run_tests.sh`, before `exit $FAILED`:
+Add to `test_komodo.py`:
 
-```bash
-echo "run-sync payload"
-tmp=$(mktemp -d)
-cat > "$tmp/stacks.toml" <<'TOML'
-[[stack]]
-name = "docker-registry"
-links = ["http://${HOMELAB_LAN_IP}:5000"]
-TOML
+```python
+class TestRunSyncCommand(KomodoTestCase):
+    def _env(self):
+        return {
+            "KOMODO_URL": self._stub.url,
+            "KOMODO_API_KEY": "test-key",
+            "KOMODO_API_SECRET": "test-secret",
+            "KOMODO_POLL_INTERVAL": "0",
+        }
 
-payload=$(komodo_sync_config homelab "$tmp/stacks.toml")
-assert_contains "$(jq -r '.params.config.file_contents' <<<"$payload")" \
-  "http://172.20.3.194:5000" "renders the toml"
-assert_eq "$(jq -r '.params.config.repo' <<<"$payload")" "" "clears repo"
-assert_eq "$(jq -r '.params.config.branch' <<<"$payload")" "" "clears branch"
-assert_eq "$(jq -r '.params.config.resource_path | length' <<<"$payload")" "0" "clears resource_path"
-assert_eq "$(jq -r '.params.id' <<<"$payload")" "homelab" "targets the named sync"
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.toml = Path(self.dir.name) / "stacks.toml"
+        self.toml.write_text('links = ["http://${HOMELAB_LAN_IP}:5000"]\n')
+        self.addCleanup(self.dir.cleanup)
 
-printf 'links = ["http://${NOPE}:1"]\n' > "$tmp/bad.toml"
-assert_fails "an unknown placeholder fails" komodo_sync_config homelab "$tmp/bad.toml"
-rm -rf "$tmp"
+    def test_pushes_rendered_contents_and_clears_the_repo_source(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            code = komodo.main([
+                "run-sync", "--sync", "homelab", "--contents-file", str(self.toml)])
+        self.assertEqual(code, 0)
+        pushed = self._stub.received[before]
+        self.assertEqual(pushed["type"], "UpdateResourceSync")
+        config = pushed["params"]["config"]
+        self.assertIn("172.20.3.194", config["file_contents"])
+        self.assertEqual(config["repo"], "")
+
+    def test_render_prints_the_expanded_file_and_contacts_nothing(self):
+        captured = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with contextlib.redirect_stdout(captured):
+                code = komodo.main(["render", str(self.toml)])
+        self.assertEqual(code, 0)
+        self.assertIn("172.20.3.194", captured.getvalue())
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: FAIL with `komodo_sync_config: command not found`.
+Expected: FAIL — `argument command: invalid choice: 'run-sync'`.
 
-- [ ] **Step 3: Implement `komodo_sync_config` in the library**
+- [ ] **Step 3: Implement both subcommands**
 
-Append to `lib/komodo.sh`:
+Add the handlers beside the others in `lib/komodo.py`:
 
-```bash
-# komodo_sync_config <sync-name> <toml-file>
-# Builds the UpdateResourceSync request for a contents-mode sync. repo, branch
-# and resource_path are cleared every time: Komodo picks its source in that
-# order and prefers a repo over stored contents, so leaving them set would
-# silently ignore what we just pushed (bin/core/src/sync/remote.rs, v2.3.1).
-komodo_sync_config() {
-  local sync=$1 file=$2 rendered
-  rendered=$(komodo_expand "$(cat "$file")") || return 1
-  jq -n --arg s "$sync" --arg toml "$rendered" \
-    '{type:"UpdateResourceSync",params:{id:$s,config:{
-       file_contents:$toml, repo:"", branch:"", resource_path:[]}}}'
-}
+```python
+def _run_sync(args):
+    client = client_from_env()
+    config = client.sync_config(args.contents_file, load_vars())
+    client.call("write", "UpdateResourceSync", {"id": args.sync, "config": config})
+    accepted = client.call("execute", "RunSync", {"sync": args.sync})
+    client.await_update(accepted["_id"]["$oid"], timeout=args.timeout)
+
+
+def _render(args):
+    # No client: this exists for scripts/bootstrap.sh, which renders the same
+    # file on a fresh server where no API key exists yet.
+    print(expand(Path(args.file).read_text(), load_vars()), end="")
+```
+
+and register them inside `main`:
+
+```python
+    sync = sub.add_parser("run-sync", help="push a sync's contents and run it")
+    sync.add_argument("--sync", required=True)
+    sync.add_argument("--contents-file", required=True)
+    sync.add_argument("--timeout", type=int, default=300)
+    sync.set_defaults(handler=_run_sync)
+
+    render = sub.add_parser("render", help="expand a file's ${VARS} and print it")
+    render.add_argument("file")
+    render.set_defaults(handler=_render)
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-.github/actions/komodo/tests/run_tests.sh
+python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-Expected: six `ok` lines under `run-sync payload`, exit 0.
+Expected: 29 tests, OK.
 
 - [ ] **Step 5: Write the action**
 
@@ -874,18 +1204,12 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
-        SYNC: ${{ inputs.sync }}
-        CONTENTS_FILE: ${{ inputs.contents-file }}
-        TIMEOUT: ${{ inputs.timeout }}
       run: |
         set -euo pipefail
-        source "$GITHUB_ACTION_PATH/../lib/komodo.sh"
-
-        komodo_call write "$(komodo_sync_config "$SYNC" "$CONTENTS_FILE")" > /dev/null
-
-        resp=$(komodo_call execute "$(jq -n --arg s "$SYNC" \
-          '{type:"RunSync",params:{sync:$s}}')")
-        komodo_await "$(jq -r '._id."$oid"' <<<"$resp")" "$TIMEOUT"
+        python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" run-sync \
+          --sync '${{ inputs.sync }}' \
+          --contents-file '${{ inputs.contents-file }}' \
+          --timeout '${{ inputs.timeout }}'
 ```
 
 - [ ] **Step 6: Verify the YAML parses**
@@ -901,7 +1225,7 @@ Expected: the six input names.
 ```bash
 git add .github/actions/komodo
 /tmp/gitleaks/gitleaks git --staged --no-banner --redact .
-git commit --no-verify -m "add the run-sync action"
+git commit --no-verify -m "add the run-sync action and a render subcommand for bootstrap"
 ```
 
 ---
@@ -912,7 +1236,7 @@ git commit --no-verify -m "add the run-sync action"
 - Create: `.github/workflows/test-actions.yml`
 
 **Interfaces:**
-- Consumes: `tests/run_tests.sh` from Task 1.
+- Consumes: `tests/test_komodo.py`.
 - Produces: a workflow that runs the suite on any push touching the action.
 
 - [ ] **Step 1: Write the workflow**
@@ -933,31 +1257,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  komodo-lib:
+  komodo-client:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Shellcheck the library
-        run: shellcheck -x .github/actions/komodo/lib/komodo.sh
-      - name: Run the library tests against the stub server
-        run: .github/actions/komodo/tests/run_tests.sh
+      - name: Run the client tests against the stub server
+        run: python3 -m unittest discover -s .github/actions/komodo/tests -v
 ```
 
-- [ ] **Step 2: Verify it parses and shellcheck is clean locally**
+- [ ] **Step 2: Verify it parses and the suite passes locally**
 
 ```bash
 python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/test-actions.yml")); print("parses")'
-shellcheck -x .github/actions/komodo/lib/komodo.sh && echo "shellcheck clean"
+python3 -m unittest discover -s .github/actions/komodo/tests 2>&1 | tail -3
 ```
 
-Expected: `parses`, then `shellcheck clean`. If shellcheck is not installed locally, note it and rely on CI.
+Expected: `parses`, then `OK`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/test-actions.yml
 /tmp/gitleaks/gitleaks git --staged --no-banner --redact .
-git commit --no-verify -m "run the komodo action tests in ci"
+git commit --no-verify -m "run the komodo client tests in ci"
 ```
 
 ---
@@ -1021,11 +1343,13 @@ Also update that job's `paths-filter` to watch the new vars location:
 git rm -q komodo/vars.env
 ```
 
-In `scripts/bootstrap.sh`, inside `seed_resource_sync`, change the render line from `. komodo/vars.env` to:
+In `scripts/bootstrap.sh`, inside `seed_resource_sync`, replace the `envsubst` render line with a call to the same library the action uses, so there is one renderer rather than two:
 
 ```bash
-  rendered=$(set -a; . .github/actions/komodo/vars.env; set +a; envsubst '${HOMELAB_LAN_IP}' < komodo/stacks.toml)
+  rendered=$(python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
 ```
+
+Also update the prerequisite check near the top of the file: it currently demands `envsubst` and `jq`. It now needs `python3` and `jq`.
 
 - [ ] **Step 4: Verify the workflow parses and nothing still references the old path**
 
@@ -1041,7 +1365,7 @@ Expected: two jobs, `bootstrap syntax ok`, `no stale vars path in code`, `hmac s
 - [ ] **Step 5: Verify bootstrap's render still produces the applied config**
 
 ```bash
-rendered=$(set -a; . .github/actions/komodo/vars.env; set +a; envsubst '${HOMELAB_LAN_IP}' < komodo/stacks.toml)
+rendered=$(python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
 diff <(grep -v '^#' <<<"$rendered") <(git show origin/main:komodo/stacks.toml | grep -v '^#') \
   && echo "rendered output matches what is live"
 ```
@@ -1216,15 +1540,26 @@ Rewrite the `sync-komodo` paragraph so it describes the action rather than inlin
 Add under `## Covered`, replacing nothing:
 
 ```markdown
-- **Composite actions share code by sourcing a sibling file, not by nested
+- **Composite actions share code through a sibling file, not a nested
   `uses:`** — a relative `uses: ./...` inside a composite action resolves
   against the *caller's* workspace, so it breaks the moment another repo uses
-  the action. Sourcing `$GITHUB_ACTION_PATH/../lib/komodo.sh` works because
+  the action. Reaching `$GITHUB_ACTION_PATH/../lib/komodo.py` works because
   GitHub checks out the whole action repository, not just the action's own
   directory. That same fact is what lets the bot repo read this repo's
   `vars.env` without fetching anything: the file is physically on the runner
-  beside the action. One shared library, one copy of the LAN address, and
+  beside the action. One shared client, one copy of the LAN address, and
   ~140 lines of hand-rolled curl deleted across two repos. (2026-09-04)
+- **The bug you keep making is a property of the language, not of you** — the
+  first version of this client was bash, and its review found three defects:
+  a function returning non-zero aborted its caller under `set -e` (so the
+  missing-stack probe killed the step it existed to inform), a secret-leak
+  test that could never fail because it drove the success path where nothing
+  is printed, and `envsubst` needing an explicit name list or it eats any `$`
+  in a compose file. The call-poll-check logic was correct both times. Rewrote
+  it in Python: same design, standard library only, and that entire class of
+  mistake stops existing. Worth asking early, not after the review: is this
+  shell script doing string handling and error control that a language with
+  exceptions would do for free? (2026-09-04)
 ```
 
 - [ ] **Step 3: Commit the prose**
