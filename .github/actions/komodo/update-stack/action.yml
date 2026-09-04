@@ -43,14 +43,21 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        STACK: ${{ inputs.stack }}
+        SERVER: ${{ inputs.server }}
         COMPOSE_FILE: ${{ inputs.compose-file }}
         ENV_FILE: ${{ inputs.env-file }}
         LINKS: ${{ inputs.links }}
+        CREATE_IF_MISSING: ${{ inputs.create-if-missing }}
       run: |
         set -euo pipefail
-        args=(update-stack --stack '${{ inputs.stack }}' --server '${{ inputs.server }}')
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
+        args=(update-stack --stack "$STACK" --server "$SERVER")
         [[ -n $COMPOSE_FILE ]] && args+=(--compose-file "$COMPOSE_FILE")
         [[ -n $ENV_FILE ]] && args+=(--env-file "$ENV_FILE")
         [[ -n $LINKS ]] && args+=(--links "$LINKS")
-        [[ '${{ inputs.create-if-missing }}' == true ]] && args+=(--create-if-missing)
+        [[ $CREATE_IF_MISSING == true ]] && args+=(--create-if-missing)
         python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" "${args[@]}"

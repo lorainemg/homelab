@@ -27,7 +27,13 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        STACK: ${{ inputs.stack }}
+        TIMEOUT: ${{ inputs.timeout }}
       run: |
         set -euo pipefail
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
         python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" deploy-stack \
-          --stack '${{ inputs.stack }}' --timeout '${{ inputs.timeout }}'
+          --stack "$STACK" --timeout "$TIMEOUT"

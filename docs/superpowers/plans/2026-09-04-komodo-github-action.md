@@ -855,10 +855,16 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        STACK: ${{ inputs.stack }}
+        TIMEOUT: ${{ inputs.timeout }}
       run: |
         set -euo pipefail
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
         python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" deploy-stack \
-          --stack '${{ inputs.stack }}' --timeout '${{ inputs.timeout }}'
+          --stack "$STACK" --timeout "$TIMEOUT"
 ```
 
 - [ ] **Step 6: Verify the YAML parses and the sibling path resolves**
@@ -1035,16 +1041,23 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        STACK: ${{ inputs.stack }}
+        SERVER: ${{ inputs.server }}
         COMPOSE_FILE: ${{ inputs.compose-file }}
         ENV_FILE: ${{ inputs.env-file }}
         LINKS: ${{ inputs.links }}
+        CREATE_IF_MISSING: ${{ inputs.create-if-missing }}
       run: |
         set -euo pipefail
-        args=(update-stack --stack '${{ inputs.stack }}' --server '${{ inputs.server }}')
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
+        args=(update-stack --stack "$STACK" --server "$SERVER")
         [[ -n $COMPOSE_FILE ]] && args+=(--compose-file "$COMPOSE_FILE")
         [[ -n $ENV_FILE ]] && args+=(--env-file "$ENV_FILE")
         [[ -n $LINKS ]] && args+=(--links "$LINKS")
-        [[ '${{ inputs.create-if-missing }}' == true ]] && args+=(--create-if-missing)
+        [[ $CREATE_IF_MISSING == true ]] && args+=(--create-if-missing)
         python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" "${args[@]}"
 ```
 
@@ -1204,12 +1217,17 @@ runs:
         KOMODO_URL: ${{ inputs.komodo-url }}
         KOMODO_API_KEY: ${{ inputs.api-key }}
         KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        SYNC: ${{ inputs.sync }}
+        CONTENTS_FILE: ${{ inputs.contents-file }}
+        TIMEOUT: ${{ inputs.timeout }}
       run: |
         set -euo pipefail
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
         python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" run-sync \
-          --sync '${{ inputs.sync }}' \
-          --contents-file '${{ inputs.contents-file }}' \
-          --timeout '${{ inputs.timeout }}'
+          --sync "$SYNC" --contents-file "$CONTENTS_FILE" --timeout "$TIMEOUT"
 ```
 
 - [ ] **Step 6: Verify the YAML parses**
@@ -1549,6 +1567,16 @@ Add under `## Covered`, replacing nothing:
   `vars.env` without fetching anything: the file is physically on the runner
   beside the action. One shared client, one copy of the LAN address, and
   ~140 lines of hand-rolled curl deleted across two repos. (2026-09-04)
+- **`${{ }}` in a `run:` block is a shell injection, not a variable** — GitHub
+  substitutes expressions into the *text* of the script before bash sees it, so
+  `--stack '${{ inputs.stack }}'` with an input containing a single quote closes
+  the quote and runs the rest as commands. Demonstrated on the first draft of
+  these actions: an input of `x'; echo INJECTED; '` executed. The fix is
+  mechanical — every input goes in the step's `env:` block and is referenced as
+  `"$VAR"`, which bash expands at runtime with no re-parsing. Worth internalising
+  because the vulnerable form reads as ordinary quoting and looks fine in review;
+  the tell is not the quotes, it is `${{` appearing anywhere below `run:`.
+  (2026-09-04)
 - **The bug you keep making is a property of the language, not of you** — the
   first version of this client was bash, and its review found three defects:
   a function returning non-zero aborted its caller under `set -e` (so the
