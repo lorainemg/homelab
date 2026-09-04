@@ -71,3 +71,75 @@ jobs:
             -H "X-Hub-Signature-256: sha256=$sig" \
             -H 'X-GitHub-Event: push' \
             -d "$body"
+
+  # Komodo's Stacks are declared in komodo/stacks.toml, but Komodo never reads
+  # that file itself. Its `links` field cannot reference a variable, so the
+  # file is a template: this job fills in `${HOMELAB_LAN_IP}` from
+  # komodo/vars.env, pushes the result into the `homelab` ResourceSync as its
+  # contents, runs the sync and waits for it. Chosen over committing a
+  # rendered copy back to the repo so there is one stacks.toml in git.
+  #
+  # This is the one job holding a Komodo API key. It belongs to the
+  # `homelab-ci` service user, Write on that sync and nothing else -- but the
+  # sync defines every Stack, post_deploy commands included, so treat that
+  # key as worth more than the webhook secret above.
+  sync-komodo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: sync
+        with:
+          filters: |
+            stacks:
+              - 'komodo/stacks.toml'
+              - 'komodo/vars.env'
+
+      - name: Render stacks.toml and push it into the sync
+        if: github.event_name == 'workflow_dispatch' || steps.sync.outputs.stacks == 'true'
+        env:
+          KOMODO_URL: ${{ secrets.KOMODO_URL }}
+          KOMODO_API_KEY: ${{ secrets.KOMODO_API_KEY }}
+          KOMODO_API_SECRET: ${{ secrets.KOMODO_API_SECRET }}
+        run: |
+          set -euo pipefail
+          auth=(-H "X-Api-Key: $KOMODO_API_KEY" -H "X-Api-Secret: $KOMODO_API_SECRET" -H 'Content-Type: application/json')
+
+          # Only the named variable is substituted, so a stray `$` elsewhere in
+          # the file is left alone; a placeholder that survives is a bug.
+          set -a; . komodo/vars.env; set +a
+          envsubst '${HOMELAB_LAN_IP}' < komodo/stacks.toml > stacks.rendered.toml
+          if grep -n '\${' stacks.rendered.toml; then
+            echo "unrendered placeholder in stacks.toml" >&2; exit 1
+          fi
+
+          # jq, not string interpolation: the TOML is full of quotes/newlines.
+          # The source fields are re-declared every run, not just the contents:
+          # Komodo picks its source in that order (files_on_host, then a linked
+          # repo, then `repo`, then the contents), so leaving `repo` set would
+          # silently keep cloning the repo and ignore what we just pushed
+          # (bin/core/src/sync/remote.rs, v2.3.1). Declaring them makes this
+          # job idempotent and lets it perform the repo -> contents switch on
+          # its own first run.
+          jq -n --rawfile toml stacks.rendered.toml '{
+            type: "UpdateResourceSync",
+            params: { id: "homelab", config: {
+              file_contents: $toml, repo: "", branch: "", resource_path: [],
+              webhook_enabled: false } }
+          }' > payload.json
+          curl -sf -X POST "$KOMODO_URL/write" "${auth[@]}" --data @payload.json > /dev/null
+
+          # /execute is async: a 2xx means accepted, not applied. Poll the
+          # Update until it completes and fail the job if the sync failed.
+          update_id=$(curl -sf -X POST "$KOMODO_URL/execute" "${auth[@]}" \
+            -d '{"type":"RunSync","params":{"sync":"homelab"}}' \
+            | jq -r '._id."$oid"')
+          for i in $(seq 1 24); do
+            sleep 5
+            status=$(curl -sf -X POST "$KOMODO_URL/read" "${auth[@]}" \
+              -d "{\"type\":\"GetUpdate\",\"params\":{\"id\":\"$update_id\"}}")
+            [ "$(jq -r .status <<<"$status")" = "Complete" ] && break
+          done
+          jq -e '.status == "Complete" and .success == true' <<<"$status" > /dev/null \
+            || { echo "Komodo sync failed:"; jq . <<<"$status"; exit 1; }
