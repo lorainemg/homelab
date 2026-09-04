@@ -3,8 +3,10 @@
 import contextlib
 import io
 import os
+import socket
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -62,6 +64,33 @@ class TestCall(KomodoTestCase):
         # Guards the harness itself: a read sent to /execute must not pass.
         with self.assertRaises(komodo.KomodoError):
             self.client.call("execute", "GetStack", {"stack": "immich"})
+
+
+class TestCallTimeout(unittest.TestCase):
+    def test_a_stalled_request_times_out_promptly(self):
+        # A socket that accepts a connection (the OS backlog completes the
+        # handshake even though nothing ever calls accept()) and never
+        # answers. With no request-level timeout this would hang forever;
+        # the client's own timeout must bound it instead.
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        self.addCleanup(server.close)
+        port = server.getsockname()[1]
+
+        client = komodo.Komodo(
+            url=f"http://127.0.0.1:{port}", api_key="k", api_secret="s",
+            request_timeout=0.2,
+        )
+        started = time.monotonic()
+        with self.assertRaises(komodo.KomodoError) as caught:
+            client.call("read", "GetStack", {"stack": "immich"})
+        elapsed = time.monotonic() - started
+
+        self.assertLess(elapsed, 1)
+        message = str(caught.exception)
+        self.assertIn("timed out", message)
+        self.assertIn("GetStack", message)
 
 
 class TestAwaitUpdate(KomodoTestCase):

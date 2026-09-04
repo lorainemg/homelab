@@ -55,11 +55,12 @@ def expand(text, variables):
 
 
 class Komodo:
-    def __init__(self, url, api_key, api_secret, poll_interval=5):
+    def __init__(self, url, api_key, api_secret, poll_interval=5, request_timeout=30):
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.api_secret = api_secret
         self.poll_interval = poll_interval
+        self.request_timeout = request_timeout
 
     def call(self, route, rtype, params):
         """POST one request to /read, /write or /execute and return the body.
@@ -67,6 +68,12 @@ class Komodo:
         The error message deliberately carries the request *type* and Komodo's
         own error text, never the request body: a stack's `environment` is in
         there, and this text ends up in a public CI log.
+
+        `request_timeout` bounds a single stalled request (a hung peer that
+        accepts a connection and never answers). It is deliberately separate
+        from `await_update`'s overall `timeout`: one stuck request must fail
+        fast so the polling loop can decide whether its own budget is spent,
+        rather than the whole job hanging until GitHub's job-level limit.
         """
         body = json.dumps({"type": rtype, "params": params}).encode()
         request = urllib.request.Request(
@@ -80,14 +87,22 @@ class Komodo:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request) as response:
+            with urllib.request.urlopen(request, timeout=self.request_timeout) as response:
                 return json.loads(response.read() or "{}")
         except urllib.error.HTTPError as error:
             detail = self._error_text(error.read())
             raise KomodoError(
                 f"komodo {rtype} failed (HTTP {error.code}): {detail}"
             ) from None
+        except TimeoutError:
+            raise KomodoError(
+                f"komodo {rtype} failed: request timed out after {self.request_timeout}s"
+            ) from None
         except urllib.error.URLError as error:
+            if isinstance(error.reason, TimeoutError):
+                raise KomodoError(
+                    f"komodo {rtype} failed: request timed out after {self.request_timeout}s"
+                ) from None
             raise KomodoError(
                 f"komodo {rtype} failed: could not reach {self.url} ({error.reason})"
             ) from None
