@@ -7,6 +7,8 @@ install in either place.
 """
 import json
 import os
+import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -59,3 +61,36 @@ class Komodo:
             return json.loads(raw).get("error", "no error field")
         except (ValueError, AttributeError):
             return "response was not json"
+
+    def await_update(self, update_id, timeout=300):
+        """Wait for an Update to finish, and decide whether it worked.
+
+        /execute only means *accepted*. Even a permission refusal comes back as
+        a 2xx with status InProgress, and surfaces here as success: false. So
+        the verdict on any execute is whatever this method says, never the
+        response to the execute itself.
+        """
+        waited = 0
+        while True:
+            update = self.call("read", "GetUpdate", {"id": update_id})
+            if update.get("status") == "Complete":
+                break
+            if waited >= timeout:
+                raise KomodoError(
+                    f"komodo update {update_id} timed out after {timeout}s "
+                    f"(last status: {update.get('status', 'Unknown')})"
+                )
+            time.sleep(self.poll_interval)
+            waited += self.poll_interval or 1
+
+        if update.get("success"):
+            print(f"komodo update {update_id} completed")
+            return None
+
+        print(f"komodo update {update_id} failed:", file=sys.stderr)
+        for log in update.get("logs") or []:
+            print(f"--- {log.get('stage', '?')}", file=sys.stderr)
+            for stream in ("stdout", "stderr"):
+                if log.get(stream):
+                    print(log[stream], file=sys.stderr)
+        raise KomodoError(f"komodo update {update_id} failed")

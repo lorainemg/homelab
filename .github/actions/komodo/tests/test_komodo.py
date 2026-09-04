@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Tests for lib/komodo.py against a stub Komodo. No network, nothing live."""
+import contextlib
+import io
 import os
 import sys
 import unittest
@@ -59,6 +61,29 @@ class TestCall(KomodoTestCase):
         # Guards the harness itself: a read sent to /execute must not pass.
         with self.assertRaises(komodo.KomodoError):
             self.client.call("execute", "GetStack", {"stack": "immich"})
+
+
+class TestAwaitUpdate(KomodoTestCase):
+    def test_returns_quietly_on_success(self):
+        self.assertIsNone(self.client.await_update("u-ok", timeout=30))
+
+    def test_raises_and_prints_the_failing_stage(self):
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            with self.assertRaises(komodo.KomodoError):
+                self.client.await_update("u-fail", timeout=30)
+        printed = captured.getvalue()
+        self.assertIn("Deploy", printed)
+        self.assertIn("denied: permission on Stack", printed)
+
+    def test_timeout_raises_rather_than_passing(self):
+        with self.assertRaises(komodo.KomodoError) as caught:
+            self.client.await_update("u-never", timeout=1)
+        self.assertIn("timed out", str(caught.exception))
+
+    def test_really_polls_rather_than_reading_status_once(self):
+        # The stub answers InProgress on the first poll for every id.
+        self.client.await_update("u-ok-again", timeout=30)
 
 
 if __name__ == "__main__":
