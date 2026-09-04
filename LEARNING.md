@@ -217,6 +217,17 @@ start of a session; update when a concept lands or a new gap appears.
   literal, and that is the right answer anyway: those links exist for when
   Cloudflare is down, and a name resolved through Cloudflare's DNS would share
   the failure it is meant to survive. (2026-09-03)
+- **Komodo's stack state ignores exit codes; it asks whether every container
+  shares one state word** — `get_stack_state_from_containers` (`helpers/query.rs`,
+  v2.3.1) is a chain of `all(...)` checks: all running → Running, all exited →
+  Stopped, any *mix* → Unhealthy. A one-shot service that exited 0 beside running
+  ones is a mix, so `group-split` read unhealthy while nothing was wrong. The
+  knob is `ignore_services`, whose doc comment names the init-container case;
+  set to `["migrations-internal"]` and the state flipped on the next poll.
+  It survives that repo's CI because `UpdateStack` is a *partial* merge
+  (`resource/mod.rs` diffs the payload against the stored config and writes
+  only changed fields), the opposite of the sync's reset-undeclared rule
+  above. (2026-09-03)
 
 ## Shaky
 
@@ -261,6 +272,8 @@ start of a session; update when a concept lands or a new gap appears.
   `["alpine","app","traktv-tg-bot/bot"]` to anyone on the internet. Image names
   are public and the images are pullable. Decide between putting it behind
   Cloudflare Access, adding registry auth, or moving those images to GHCR.
+- `group-split`'s `ignore_services` lives only in Komodo's Mongo. Decide
+  whether to move it into that repo's `deploy.yml` payload so a rebuild keeps it.
 
 ## Open questions
 
