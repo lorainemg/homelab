@@ -218,6 +218,25 @@ def _deploy_stack(args):
     client.await_update(accepted["_id"]["$oid"], timeout=args.timeout)
 
 
+def _update_stack(args):
+    client = client_from_env()
+    if args.create_if_missing and not client.stack_exists(args.stack):
+        print(f"stack {args.stack} does not exist yet; creating it")
+        client.call("write", "CreateStack", {
+            "name": args.stack,
+            "config": {
+                "server_id": args.server,
+                "project_name": args.stack,
+                "file_contents": "services: {}",
+                "webhook_enabled": False,
+            },
+        })
+    config = client.stack_config(
+        args.compose_file, args.env_file, args.links, load_vars())
+    client.call("write", "UpdateStack", {"id": args.stack, "config": config})
+    print(f"stack {args.stack} updated")
+
+
 def main(argv=None):
     """Entry point for the composite actions. Never raises: an exception
     becomes exit 1 with a readable message, which is what fails the step."""
@@ -228,6 +247,15 @@ def main(argv=None):
     deploy.add_argument("--stack", required=True)
     deploy.add_argument("--timeout", type=int, default=300)
     deploy.set_defaults(handler=_deploy_stack)
+
+    update = sub.add_parser("update-stack", help="push a stack's definition")
+    update.add_argument("--stack", required=True)
+    update.add_argument("--compose-file", default=None)
+    update.add_argument("--env-file", default=None)
+    update.add_argument("--links", default=None)
+    update.add_argument("--create-if-missing", action="store_true")
+    update.add_argument("--server", default="Local")
+    update.set_defaults(handler=_update_stack)
 
     args = parser.parse_args(argv)
     try:

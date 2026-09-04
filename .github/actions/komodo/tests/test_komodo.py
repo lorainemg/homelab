@@ -229,5 +229,41 @@ class TestCli(KomodoTestCase):
         self.assertIn("KOMODO_URL", captured.getvalue())
 
 
+class TestUpdateStackCommand(KomodoTestCase):
+    def _env(self):
+        return {
+            "KOMODO_URL": self._stub.url,
+            "KOMODO_API_KEY": "test-key",
+            "KOMODO_API_SECRET": "test-secret",
+        }
+
+    def test_creates_the_stack_when_missing_then_updates_it(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            code = komodo.main([
+                "update-stack", "--stack", "missing-stack", "--create-if-missing"])
+        self.assertEqual(code, 0)
+        sent = [r["type"] for r in self._stub.received[before:]]
+        self.assertEqual(sent, ["CreateStack", "UpdateStack"])
+
+    def test_does_not_create_when_the_stack_is_there(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            code = komodo.main([
+                "update-stack", "--stack", "immich", "--create-if-missing"])
+        self.assertEqual(code, 0)
+        sent = [r["type"] for r in self._stub.received[before:]]
+        self.assertEqual(sent, ["UpdateStack"])
+
+    def test_links_reach_komodo_expanded(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            komodo.main([
+                "update-stack", "--stack", "immich",
+                "--links", "http://${HOMELAB_LAN_IP}:2283"])
+        config = self._stub.received[before]["params"]["config"]
+        self.assertEqual(config["links"], ["http://172.20.3.194:2283"])
+
+
 if __name__ == "__main__":
     unittest.main()
