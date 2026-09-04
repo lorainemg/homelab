@@ -85,7 +85,11 @@ network (`internal`). DNS is a wildcard `*.{domain}` CNAME at the tunnel, so
 what actually decides whether a hostname is public is the tunnel's own ingress
 list (Zero Trust → Networks → Tunnels → Public Hostnames), which ends in
 `http_status:404` — publishing a service means adding it *there* as well as in
-the Caddyfile. TLS terminates at Cloudflare's edge. The tunnel runs
+the Caddyfile. TLS terminates at Cloudflare's edge, so every site block is
+`http://` and origins see plain HTTP — an app that decides anything from the
+request scheme (secure cookies, redirect URLs) has to be told the real one, and
+Caddy overwrites `X-Forwarded-Proto` with the scheme it was reached on unless
+`trusted_proxies` says otherwise. The tunnel runs
 in its own host-managed compose, separate from every control plane, so no
 deploy — CI's or Komodo's — can take down the route used to repair it.
 
