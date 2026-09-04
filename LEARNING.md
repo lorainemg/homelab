@@ -191,9 +191,43 @@ start of a session; update when a concept lands or a new gap appears.
   safe (with `delete: false`). Caught before it wiped `trakt-tg-bot`'s
   CI-written `file_contents` and secrets, because the pending diff was read
   on the live server before `RunSync` — the diff-review gate did its job the
-  first time it existed. The bot stack's answer: its shell is seeded by
-  `bootstrap.sh`, its contents stay owned by the bot repo's CI, and no TOML
-  ever names it. (2026-08-25)
+  first time it existed. The bot stack's answer: its shell was seeded by
+  `bootstrap.sh` (until 2026-09-02 — see the next entry), its contents stay
+  owned by the bot repo's CI, and no TOML ever names it. (2026-08-25)
+- **Non-admin Komodo users can create Stacks — the README said they couldn't.**
+  Komodo's rule is one line, `user.admin || !core_config().disable_non_admin_create`
+  (`resource/stack.rs`, v2.3.1), and that flag is unset here. What creation
+  *does* need is Read **plus the specific `Attach` permission on the target
+  server** — Read alone fails with "Cannot attach Stack to this Server" — and
+  the creator is then granted Write on the new resource automatically.
+  Verified end to end as the `trakt-tg-bot-ci` service user with a throwaway
+  stack that was never deployed (volume count 72 before and after). The
+  recorded "narrow key cannot create stacks" verdict had never been tried —
+  the floci mistake again — and it had shaped both `bootstrap.sh` and the
+  README. The bot's CI now creates its own Stack if missing; bootstrap no
+  longer seeds it. One more wrinkle: `GetStack` on a missing name answers
+  HTTP 500 with "Did not find any Stack", not a 404, so the CI branches on
+  the body. (2026-09-02)
+- **Komodo's `[[VAR]]` interpolation never reaches `links`, and the sync does
+  none at all** — `lib/interpolate/src/lib.rs` (v2.3.1) lists the seven stack
+  fields that get variables swapped in at deploy time: `file_contents`,
+  `environment`, both deploy commands, `compose_cmd_wrapper` and the two
+  extra-args lists. `bin/core/src/sync/` has no interpolation call, so
+  `stacks.toml` is applied verbatim. The LAN IP in each stack's `links` stays
+  literal, and that is the right answer anyway: those links exist for when
+  Cloudflare is down, and a name resolved through Cloudflare's DNS would share
+  the failure it is meant to survive. (2026-09-03)
+- **Komodo's stack state ignores exit codes; it asks whether every container
+  shares one state word** — `get_stack_state_from_containers` (`helpers/query.rs`,
+  v2.3.1) is a chain of `all(...)` checks: all running → Running, all exited →
+  Stopped, any *mix* → Unhealthy. A one-shot service that exited 0 beside running
+  ones is a mix, so `group-split` read unhealthy while nothing was wrong. The
+  knob is `ignore_services`, whose doc comment names the init-container case;
+  set to `["migrations-internal"]` and the state flipped on the next poll.
+  It survives that repo's CI because `UpdateStack` is a *partial* merge
+  (`resource/mod.rs` diffs the payload against the stored config and writes
+  only changed fields), the opposite of the sync's reset-undeclared rule
+  above. (2026-09-03)
 
 ## Shaky
 
@@ -238,6 +272,8 @@ start of a session; update when a concept lands or a new gap appears.
   `["alpine","app","traktv-tg-bot/bot"]` to anyone on the internet. Image names
   are public and the images are pullable. Decide between putting it behind
   Cloudflare Access, adding registry auth, or moving those images to GHCR.
+- `group-split`'s `ignore_services` lives only in Komodo's Mongo. Decide
+  whether to move it into that repo's `deploy.yml` payload so a rebuild keeps it.
 
 ## Open questions
 

@@ -100,11 +100,13 @@ One more stack runs on the server but is deliberately **not** defined here:
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
 for Trakt.tv + Postgres 17 + Aspire dashboard) generates its compose file
 with .NET Aspire and deploys itself from its own repo's CI through the Komodo
-API: a `trakt-tg-bot` Stack in `file_contents` mode, filled and deployed by CI
-with a service-user key that has Write on that one stack and nothing else —
-which is why the empty Stack shell itself is seeded by `scripts/bootstrap.sh`
-(the narrow key cannot create stacks, and no sync TOML may declare this one:
-sync resets any field it doesn't declare, and this Stack's contents are CI's).
+API: a `trakt-tg-bot` Stack in `file_contents` mode that CI creates on its
+first run if missing, then fills and deploys on every push. CI holds a key for
+the `trakt-tg-bot-ci` service user, which has Read + Attach on the server
+(what creating a stack there needs — Komodo lets non-admins create stacks
+unless `KOMODO_DISABLE_NON_ADMIN_CREATE` is set) and is granted Write on the
+stack automatically as its creator. No sync TOML may declare this Stack: sync
+resets any field it doesn't declare, and this Stack's contents are CI's.
 Beyond that seam this repo only documents it (the monitoring stack joins its
 network to collect telemetry). One sharp edge to know: Aspire derives the Postgres volume
 name from an apphost hash, so an Aspire CLI update can silently point the stack
@@ -188,8 +190,10 @@ Conventions:
    [komodo/stacks.toml](komodo/stacks.toml) (a ResourceSync) and ran the first
    sync, which creates every Stack with its `project_name` **exactly** the
    directory name — so an existing server's volumes (`<project>_<volume>`) are
-   adopted rather than recreated empty — plus the empty `trakt-tg-bot` shell
-   its own repo's CI fills. Per-stack deploy behaviour
+   adopted rather than recreated empty. The `trakt-tg-bot` Stack is the
+   exception: its own repo's CI creates it on first run (see above), which
+   needs the `trakt-tg-bot-ci` service user recreated by hand with an API key
+   and Read + Attach on the server. Per-stack deploy behaviour
    (`webhook_force_deploy`, `post_deploy` restarts for processes that don't
    hot-reload their config) lives in that file too. What remains by hand:
    copy each stack's `.env.example` to
@@ -209,7 +213,7 @@ Conventions:
 shared network, refuses to start if `tunnel/.env` or `komodo/.env` is missing,
 brings up those two stacks, then seeds the control plane — the ResourceSync
 pointing at `komodo/stacks.toml` (running the first sync, which creates every
-Stack) and the empty `trakt-tg-bot` shell. Steps 4-6's remaining hand work
+Stack). Steps 4-6's remaining hand work
 (`.env` files, webhooks, Mosquitto users) finishes the rebuild. If you need a stack up with no
 control plane at all — Komodo itself broken, say — its compose file still runs
 standalone: `docker compose --project-directory <stack> up -d`, with that
