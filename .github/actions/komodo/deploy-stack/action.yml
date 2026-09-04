@@ -1,0 +1,33 @@
+name: Komodo deploy stack
+description: Deploy a Komodo stack and wait for the result, failing on Komodo's own error.
+
+inputs:
+  komodo-url:
+    description: Base URL of Komodo Core.
+    required: true
+  api-key:
+    description: API key for a Komodo service user with Execute on this stack.
+    required: true
+  api-secret:
+    description: API secret for that key.
+    required: true
+  stack:
+    description: Name of the stack to deploy.
+    required: true
+  timeout:
+    description: Seconds to wait for the deploy to finish.
+    required: false
+    default: "300"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KOMODO_URL: ${{ inputs.komodo-url }}
+        KOMODO_API_KEY: ${{ inputs.api-key }}
+        KOMODO_API_SECRET: ${{ inputs.api-secret }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" deploy-stack \
+          --stack '${{ inputs.stack }}' --timeout '${{ inputs.timeout }}'

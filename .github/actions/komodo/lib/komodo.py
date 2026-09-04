@@ -5,6 +5,7 @@ Komodo Core 2.3.1. Everything here is standard library on purpose: this runs on
 a GitHub runner and on a freshly installed homelab server, with nothing to pip
 install in either place.
 """
+import argparse
 import json
 import os
 import re
@@ -193,3 +194,49 @@ class Komodo:
             "branch": "",
             "resource_path": [],
         }
+
+
+def client_from_env():
+    """Build a client from the environment the composite actions set."""
+    missing = [
+        name for name in ("KOMODO_URL", "KOMODO_API_KEY", "KOMODO_API_SECRET")
+        if not os.environ.get(name)
+    ]
+    if missing:
+        raise KomodoError(f"missing environment: {', '.join(missing)}")
+    return Komodo(
+        url=os.environ["KOMODO_URL"],
+        api_key=os.environ["KOMODO_API_KEY"],
+        api_secret=os.environ["KOMODO_API_SECRET"],
+        poll_interval=int(os.environ.get("KOMODO_POLL_INTERVAL", "5")),
+    )
+
+
+def _deploy_stack(args):
+    client = client_from_env()
+    accepted = client.call("execute", "DeployStack", {"stack": args.stack})
+    client.await_update(accepted["_id"]["$oid"], timeout=args.timeout)
+
+
+def main(argv=None):
+    """Entry point for the composite actions. Never raises: an exception
+    becomes exit 1 with a readable message, which is what fails the step."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    deploy = sub.add_parser("deploy-stack", help="deploy a stack and wait")
+    deploy.add_argument("--stack", required=True)
+    deploy.add_argument("--timeout", type=int, default=300)
+    deploy.set_defaults(handler=_deploy_stack)
+
+    args = parser.parse_args(argv)
+    try:
+        args.handler(args)
+    except KomodoError as error:
+        print(error, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -196,6 +197,36 @@ class TestPayloads(KomodoTestCase):
         self.assertEqual(config["repo"], "")
         self.assertEqual(config["branch"], "")
         self.assertEqual(config["resource_path"], [])
+
+
+class TestCli(KomodoTestCase):
+    def _env(self):
+        return {
+            "KOMODO_URL": self._stub.url,
+            "KOMODO_API_KEY": "test-key",
+            "KOMODO_API_SECRET": "test-secret",
+            "KOMODO_POLL_INTERVAL": "0",
+        }
+
+    def test_deploy_stack_returns_zero_on_success(self):
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            self.assertEqual(komodo.main(["deploy-stack", "--stack", "immich"]), 0)
+
+    def test_deploy_stack_returns_one_when_komodo_refuses(self):
+        captured = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            with contextlib.redirect_stderr(captured):
+                code = komodo.main(["deploy-stack", "--stack", "fail-me"])
+        self.assertEqual(code, 1)
+        self.assertIn("denied: permission on Stack", captured.getvalue())
+
+    def test_missing_credentials_is_a_clear_error(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            captured = io.StringIO()
+            with contextlib.redirect_stderr(captured):
+                code = komodo.main(["deploy-stack", "--stack", "immich"])
+        self.assertEqual(code, 1)
+        self.assertIn("KOMODO_URL", captured.getvalue())
 
 
 if __name__ == "__main__":
