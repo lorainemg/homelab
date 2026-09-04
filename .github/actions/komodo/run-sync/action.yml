@@ -1,0 +1,38 @@
+name: Komodo run sync
+description: Render a ResourceSync's TOML, push it as the sync's contents, run the sync and wait.
+
+inputs:
+  komodo-url:
+    description: Base URL of Komodo Core.
+    required: true
+  api-key:
+    description: API key for a Komodo service user with Write on this sync.
+    required: true
+  api-secret:
+    description: API secret for that key.
+    required: true
+  sync:
+    description: Name of the ResourceSync.
+    required: true
+  contents-file:
+    description: TOML file to push. ${NAME} is expanded from vars.env.
+    required: true
+  timeout:
+    description: Seconds to wait for the sync to finish.
+    required: false
+    default: "300"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KOMODO_URL: ${{ inputs.komodo-url }}
+        KOMODO_API_KEY: ${{ inputs.api-key }}
+        KOMODO_API_SECRET: ${{ inputs.api-secret }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" run-sync \
+          --sync '${{ inputs.sync }}' \
+          --contents-file '${{ inputs.contents-file }}' \
+          --timeout '${{ inputs.timeout }}'

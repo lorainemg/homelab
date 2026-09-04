@@ -237,6 +237,20 @@ def _update_stack(args):
     print(f"stack {args.stack} updated")
 
 
+def _run_sync(args):
+    client = client_from_env()
+    config = client.sync_config(args.contents_file, load_vars())
+    client.call("write", "UpdateResourceSync", {"id": args.sync, "config": config})
+    accepted = client.call("execute", "RunSync", {"sync": args.sync})
+    client.await_update(accepted["_id"]["$oid"], timeout=args.timeout)
+
+
+def _render(args):
+    # No client: this exists for scripts/bootstrap.sh, which renders the same
+    # file on a fresh server where no API key exists yet.
+    print(expand(Path(args.file).read_text(), load_vars()), end="")
+
+
 def main(argv=None):
     """Entry point for the composite actions. Never raises: an exception
     becomes exit 1 with a readable message, which is what fails the step."""
@@ -256,6 +270,16 @@ def main(argv=None):
     update.add_argument("--create-if-missing", action="store_true")
     update.add_argument("--server", default="Local")
     update.set_defaults(handler=_update_stack)
+
+    sync = sub.add_parser("run-sync", help="push a sync's contents and run it")
+    sync.add_argument("--sync", required=True)
+    sync.add_argument("--contents-file", required=True)
+    sync.add_argument("--timeout", type=int, default=300)
+    sync.set_defaults(handler=_run_sync)
+
+    render = sub.add_parser("render", help="expand a file's ${VARS} and print it")
+    render.add_argument("file")
+    render.set_defaults(handler=_render)
 
     args = parser.parse_args(argv)
     try:

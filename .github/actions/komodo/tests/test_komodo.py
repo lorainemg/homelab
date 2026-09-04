@@ -265,5 +265,41 @@ class TestUpdateStackCommand(KomodoTestCase):
         self.assertEqual(config["links"], ["http://172.20.3.194:2283"])
 
 
+class TestRunSyncCommand(KomodoTestCase):
+    def _env(self):
+        return {
+            "KOMODO_URL": self._stub.url,
+            "KOMODO_API_KEY": "test-key",
+            "KOMODO_API_SECRET": "test-secret",
+            "KOMODO_POLL_INTERVAL": "0",
+        }
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.toml = Path(self.dir.name) / "stacks.toml"
+        self.toml.write_text('links = ["http://${HOMELAB_LAN_IP}:5000"]\n')
+        self.addCleanup(self.dir.cleanup)
+
+    def test_pushes_rendered_contents_and_clears_the_repo_source(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self._env()):
+            code = komodo.main([
+                "run-sync", "--sync", "homelab", "--contents-file", str(self.toml)])
+        self.assertEqual(code, 0)
+        pushed = self._stub.received[before]
+        self.assertEqual(pushed["type"], "UpdateResourceSync")
+        config = pushed["params"]["config"]
+        self.assertIn("172.20.3.194", config["file_contents"])
+        self.assertEqual(config["repo"], "")
+
+    def test_render_prints_the_expanded_file_and_contacts_nothing(self):
+        captured = io.StringIO()
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            with contextlib.redirect_stdout(captured):
+                code = komodo.main(["render", str(self.toml)])
+        self.assertEqual(code, 0)
+        self.assertIn("172.20.3.194", captured.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
