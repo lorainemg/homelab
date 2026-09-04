@@ -30,6 +30,21 @@ http://librechat.sussman.win {
 # `web` service joins `internal` under the alias `group-split-web` and Kestrel
 # listens on 8080. Only `web` is published — `api` and `keycloak` stay on the
 # stack's private network and are reached server-side.
+#
+# TLS terminates at Cloudflare, so this site block is `http://` and Caddy sets
+# `X-Forwarded-Proto: http` from the scheme it was reached on — overwriting
+# whatever cloudflared sent, because `trusted_proxies` is not configured. The
+# stack's Keycloak reads that header to decide whether the context is secure,
+# and on `http` it drops `Secure` and downgrades `SameSite=None` to `Lax`. The
+# browser then withholds those cookies on the account console's cross-origin
+# POST to the token endpoint, which fails as `403 invalid_client`.
+#
+# Forced rather than trusted: `header_up` sets the value whatever Caddy or
+# cloudflared put there, so the fix does not rest on what the tunnel forwards.
+# Every request that arrives here came through the tunnel, where the public
+# scheme is https, so stating it is accurate.
 http://groupsplit.sussman.win {
-    reverse_proxy group-split-web:8080
+    reverse_proxy group-split-web:8080 {
+        header_up X-Forwarded-Proto https
+    }
 }
