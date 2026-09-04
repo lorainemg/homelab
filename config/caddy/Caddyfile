@@ -24,3 +24,7 @@ http://komodo.sussman.win {
 http://librechat.sussman.win {
     reverse_proxy librechat:3080
 }
+
+http://groupsplit.sussman.win {
+    reverse_proxy group-split-web:8080
+}
