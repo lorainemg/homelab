@@ -229,6 +229,17 @@ start of a session; update when a concept lands or a new gap appears.
   only changed fields), the opposite of the sync's reset-undeclared rule
   above. (2026-09-03)
 
+- **A wildcard DNS record does not publish a hostname; the tunnel's ingress
+  list does** — `*.sussman.win` is already a proxied CNAME at the tunnel, so
+  every subdomain resolves. But a token-run `cloudflared` fetches an explicit
+  per-hostname ingress list that ends in `http_status:404`, so an unlisted
+  subdomain resolves, reaches Cloudflare, and gets a 404 that never touches the
+  server. Publishing `groupsplit.sussman.win` therefore took two changes on the
+  Cloudflare side (ingress rule, plus an explicit CNAME to match the five
+  hand-made ones) and one in this repo (the Caddyfile). The README said the
+  tunnel "routes `*.{domain}` to Caddy", which was half the story and would have
+  sent a future me hunting in Caddy for a 404 Caddy never issued. (2026-09-03)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
@@ -281,3 +292,11 @@ start of a session; update when a concept lands or a new gap appears.
   merges repo config into directories holding runtime state simply necessary?
 - Is `cloudflared` on `:latest` a problem worth fixing, given the tunnel is the
   one thing that must never surprise you?
+- group-split's `Keycloak__Authority` is a LAN IP
+  (`http://172.20.3.194:8080/idp/realms/group-split`), and `keycloak` sits on
+  the stack's private network rather than `internal`. So `groupsplit.sussman.win`
+  serves the app but cannot complete a browser login from outside the house.
+  Fixing it is a change in the group-split repo, not this one — join `keycloak`
+  to `internal` and point the authority at a published hostname — but the
+  decision worth making first is whether that app should be internet-facing at
+  all, or sit behind Cloudflare Access like the registry question above.
