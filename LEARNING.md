@@ -239,6 +239,19 @@ start of a session; update when a concept lands or a new gap appears.
   hand-made ones) and one in this repo (the Caddyfile). The README said the
   tunnel "routes `*.{domain}` to Caddy", which was half the story and would have
   sent a future me hunting in Caddy for a 404 Caddy never issued. (2026-09-03)
+- **A file Komodo reads verbatim cannot hold a variable, so the render moved
+  to CI — and a standing credential came with it** — `links` is outside
+  Komodo's interpolation and the sync applies `stacks.toml` word for word, so
+  the server's LAN address sat in five links here and in the bot's workflow.
+  Now `stacks.toml` is a template, `komodo/vars.env` holds the value once, and
+  the `sync-komodo` job renders with `envsubst`, pushes the result into the
+  sync as contents (a sync with no `repo` and no `files_on_host` reads its
+  `file_contents`, `sync/remote.rs`) and runs it. Rejected on the way: a Komodo
+  Variable (a seventh copy nothing could reference) and committing a rendered
+  copy back (two `stacks.toml` in git). The cost, taken with eyes open: CI now
+  holds an API key that can rewrite every Stack, `post_deploy` commands
+  included, where before it held a webhook secret that could only redeploy.
+  Scoped to a `homelab-ci` service user with Write on the one sync. (2026-09-03)
 
 ## Shaky
 

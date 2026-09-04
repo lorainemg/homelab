@@ -5,6 +5,13 @@
 # file that layer exists only in the database and cannot be grepped, reviewed
 # or rebuilt from the repo.
 #
+# This file is a template. `${HOMELAB_LAN_IP}` is filled in from
+# komodo/vars.env by the sync job in .github/workflows/deploy.yml (and by
+# scripts/bootstrap.sh on a fresh server), and the rendered TOML is pushed
+# into the `homelab` sync, which holds it as contents instead of cloning this
+# repo. So Komodo never reads this file directly, and a value that appears in
+# many links is written once, in vars.env.
+#
 # Only non-default fields are declared. Komodo's sync diffs *declared* fields
 # against the live config and cannot see the rest, so anything omitted here is
 # left exactly as it is — not reset. That is deliberate:
@@ -25,9 +32,11 @@
 #   - `links` is what the Komodo UI shows as clickable URLs on the stack. Each
 #     lists the public hostname first (Cloudflare tunnel -> Caddy -> container;
 #     the hostname table lives in the tunnel's dashboard config, not here), then
-#     the LAN address for every port the compose file publishes on the host
-#     (the server is 172.20.3.194). No link means nothing is reachable from
-#     outside its own Docker network.
+#     the LAN address for every port the compose file publishes on the host.
+#     No link means nothing is reachable from outside its own Docker network.
+#     `links` is not one of the fields Komodo interpolates (lib/interpolate,
+#     v2.3.1), which is why the address is rendered in before the push rather
+#     than referenced as a Komodo variable.
 
 [[server]]
 name = "Local"
@@ -56,7 +65,7 @@ server = "Local"
 project_name = "docker-registry"
 repo = "lorainemg/homelab"
 file_paths = ["registry/docker-compose.yml"]
-links = ["https://registry.sussman.win", "http://172.20.3.194:5000"]
+links = ["https://registry.sussman.win", "http://${HOMELAB_LAN_IP}:5000"]
 
 ##
 
@@ -67,7 +76,7 @@ server = "Local"
 project_name = "home-assistant"
 repo = "lorainemg/homelab"
 file_paths = ["home-assistant/docker-compose.yml"]
-links = ["https://homeassistant.sussman.win", "http://172.20.3.194:8123"]
+links = ["https://homeassistant.sussman.win", "http://${HOMELAB_LAN_IP}:8123"]
 
 ##
 
@@ -78,7 +87,7 @@ server = "Local"
 project_name = "immich"
 repo = "lorainemg/homelab"
 file_paths = ["immich/docker-compose.yml"]
-links = ["https://immich.sussman.win", "http://172.20.3.194:2283"]
+links = ["https://immich.sussman.win", "http://${HOMELAB_LAN_IP}:2283"]
 
 ##
 
@@ -111,8 +120,8 @@ file_paths = ["monitoring/docker-compose.yml"]
 # is LAN-only.
 links = [
   "https://grafana.sussman.win",
-  "http://172.20.3.194:3000",
-  "http://172.20.3.194:9090",
+  "http://${HOMELAB_LAN_IP}:3000",
+  "http://${HOMELAB_LAN_IP}:9090",
 ]
 # Same reason as librechat: these four read their config files at startup only.
 webhook_force_deploy = true
