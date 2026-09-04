@@ -7,14 +7,51 @@ install in either place.
 """
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 
 class KomodoError(RuntimeError):
     """Anything Komodo refused, or any response we could not use."""
+
+
+VARS_FILE = Path(__file__).resolve().parent.parent / "vars.env"
+_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def load_vars(path=None):
+    """Read the shared values that sit beside this library."""
+    variables = {}
+    for line in Path(path or VARS_FILE).read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        variables[name.strip()] = value.strip()
+    return variables
+
+
+def expand(text, variables):
+    """Replace ${NAME} from `variables`, and refuse to leave one behind.
+
+    Only the ${...} form is touched, so a bare `$` in a compose file or a
+    password is never disturbed. An unknown name is an error rather than an
+    empty string: a link silently rendered to `http://:5000` would look
+    plausible in the UI and go nowhere.
+    """
+    missing = sorted(
+        {name for name in _PLACEHOLDER.findall(text) if name not in variables}
+    )
+    if missing:
+        raise KomodoError(
+            f"unresolved placeholder(s) {', '.join(missing)}; "
+            f"declared in vars.env: {', '.join(sorted(variables)) or 'nothing'}"
+        )
+    return _PLACEHOLDER.sub(lambda m: variables[m.group(1)], text)
 
 
 class Komodo:
@@ -94,3 +131,50 @@ class Komodo:
                 if log.get(stream):
                     print(log[stream], file=sys.stderr)
         raise KomodoError(f"komodo update {update_id} failed")
+
+    def stack_exists(self, name):
+        """Whether Komodo knows this stack.
+
+        A missing stack is HTTP 500 with "Did not find any Stack", not a 404,
+        so the body is the only reliable signal. Any other failure is a real
+        failure and is re-raised rather than read as "absent".
+        """
+        try:
+            return self.call("read", "GetStack", {"stack": name}).get("name") == name
+        except KomodoError as error:
+            if "Did not find any Stack" in str(error):
+                return False
+            raise
+
+    def stack_config(self, compose_file, env_file, links, variables):
+        """Build an UpdateStack config from whichever inputs were supplied.
+
+        A falsy argument means "leave that field alone": omitted fields are
+        absent from the payload, so an update never clears something the
+        caller did not mention.
+        """
+        config = {}
+        if compose_file:
+            config["file_contents"] = Path(compose_file).read_text()
+        if env_file:
+            config["environment"] = Path(env_file).read_text()
+        if links:
+            config["links"] = [
+                line for line in expand(links, variables).splitlines() if line
+            ]
+        return config
+
+    def sync_config(self, toml_file, variables):
+        """Build the config for a contents-mode ResourceSync.
+
+        repo, branch and resource_path are cleared every time: Komodo picks its
+        source in that order and prefers a repo over stored contents, so
+        leaving them set would silently ignore what we just pushed
+        (bin/core/src/sync/remote.rs, v2.3.1).
+        """
+        return {
+            "file_contents": expand(Path(toml_file).read_text(), variables),
+            "repo": "",
+            "branch": "",
+            "resource_path": [],
+        }

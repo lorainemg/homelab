@@ -4,6 +4,7 @@ import contextlib
 import io
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -84,6 +85,88 @@ class TestAwaitUpdate(KomodoTestCase):
     def test_really_polls_rather_than_reading_status_once(self):
         # The stub answers InProgress on the first poll for every id.
         self.client.await_update("u-ok-again", timeout=30)
+
+
+class TestExpand(unittest.TestCase):
+    VARS = {"HOMELAB_LAN_IP": "172.20.3.194"}
+
+    def test_expands_a_known_placeholder(self):
+        self.assertEqual(
+            komodo.expand("http://${HOMELAB_LAN_IP}:5000", self.VARS),
+            "http://172.20.3.194:5000")
+
+    def test_leaves_plain_text_alone(self):
+        self.assertEqual(komodo.expand("no placeholders", self.VARS), "no placeholders")
+
+    def test_leaves_a_bare_dollar_alone(self):
+        # A compose file or a password may legitimately contain one.
+        text = "cost is $5 and 100% real"
+        self.assertEqual(komodo.expand(text, self.VARS), text)
+
+    def test_an_unknown_placeholder_is_an_error(self):
+        with self.assertRaises(komodo.KomodoError) as caught:
+            komodo.expand("http://${NOPE}:1", self.VARS)
+        self.assertIn("NOPE", str(caught.exception))
+
+    def test_load_vars_reads_the_file_beside_the_library(self):
+        self.assertEqual(komodo.load_vars()["HOMELAB_LAN_IP"], "172.20.3.194")
+
+
+class TestStackExists(KomodoTestCase):
+    def test_true_for_an_existing_stack(self):
+        self.assertTrue(self.client.stack_exists("immich"))
+
+    def test_false_on_the_500_not_found_body(self):
+        # Komodo answers a missing stack with 500, not 404.
+        self.assertFalse(self.client.stack_exists("missing-stack"))
+
+    def test_other_failures_still_raise(self):
+        broken = komodo.Komodo(url="http://127.0.0.1:1", api_key="k", api_secret="s")
+        with self.assertRaises(komodo.KomodoError):
+            broken.stack_exists("immich")
+
+
+class TestPayloads(KomodoTestCase):
+    VARS = {"HOMELAB_LAN_IP": "172.20.3.194"}
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.compose = Path(self.dir.name) / "compose.yaml"
+        self.compose.write_text("services: {}\n")
+        self.env = Path(self.dir.name) / ".env"
+        self.env.write_text("A=1\n")
+        self.addCleanup(self.dir.cleanup)
+
+    def test_carries_every_supplied_field(self):
+        config = self.client.stack_config(
+            str(self.compose), str(self.env),
+            "http://${HOMELAB_LAN_IP}:28888/login", self.VARS)
+        self.assertEqual(config["file_contents"], "services: {}\n")
+        self.assertEqual(config["environment"], "A=1\n")
+        self.assertEqual(config["links"], ["http://172.20.3.194:28888/login"])
+
+    def test_omits_fields_with_no_input(self):
+        # An omitted input must never clear what is already on the stack.
+        config = self.client.stack_config(str(self.compose), None, None, self.VARS)
+        self.assertNotIn("environment", config)
+        self.assertNotIn("links", config)
+
+    def test_splits_multiple_links(self):
+        config = self.client.stack_config(
+            None, None, "http://${HOMELAB_LAN_IP}:1\nhttp://${HOMELAB_LAN_IP}:2",
+            self.VARS)
+        self.assertEqual(len(config["links"]), 2)
+
+    def test_sync_config_clears_the_other_sources(self):
+        # Komodo prefers a repo over stored contents, so leaving repo set would
+        # silently ignore what we just pushed.
+        toml = Path(self.dir.name) / "stacks.toml"
+        toml.write_text('links = ["http://${HOMELAB_LAN_IP}:5000"]\n')
+        config = self.client.sync_config(str(toml), self.VARS)
+        self.assertIn("172.20.3.194", config["file_contents"])
+        self.assertEqual(config["repo"], "")
+        self.assertEqual(config["branch"], "")
+        self.assertEqual(config["resource_path"], [])
 
 
 if __name__ == "__main__":
