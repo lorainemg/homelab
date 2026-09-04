@@ -24,3 +24,12 @@ http://komodo.sussman.win {
 http://librechat.sussman.win {
     reverse_proxy librechat:3080
 }
+
+# group-split deploys itself from its own repo (Aspire-generated compose, like
+# the trakt bot), so this upstream name is that stack's, not this repo's: its
+# `web` service joins `internal` under the alias `group-split-web` and Kestrel
+# listens on 8080. Only `web` is published — `api` and `keycloak` stay on the
+# stack's private network and are reached server-side.
+http://groupsplit.sussman.win {
+    reverse_proxy group-split-web:8080
+}

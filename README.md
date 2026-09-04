@@ -37,6 +37,7 @@ flowchart LR
         KOMODO[Komodo]
         REGISTRY[Docker registry]
         LIBRECHAT[LibreChat]
+        GROUPSPLIT[GroupSplit]
     end
 
     CADDY --> IMMICH
@@ -45,6 +46,7 @@ flowchart LR
     CADDY --> KOMODO
     CADDY --> REGISTRY
     CADDY --> LIBRECHAT
+    CADDY --> GROUPSPLIT
 
     subgraph voice[Local voice & AI]
         WHISPER[Whisper STT]
@@ -77,9 +79,13 @@ flowchart LR
 ```
 
 No inbound ports are open on the router: `cloudflared` maintains an
-outbound-only tunnel to Cloudflare, which routes `*.{domain}` hostnames to
+outbound-only tunnel to Cloudflare, which routes published hostnames to
 Caddy, which reverse-proxies to each service over a shared Docker bridge
-network (`internal`). TLS terminates at Cloudflare's edge. The tunnel runs
+network (`internal`). DNS is a wildcard `*.{domain}` CNAME at the tunnel, so
+what actually decides whether a hostname is public is the tunnel's own ingress
+list (Zero Trust → Networks → Tunnels → Public Hostnames), which ends in
+`http_status:404` — publishing a service means adding it *there* as well as in
+the Caddyfile. TLS terminates at Cloudflare's edge. The tunnel runs
 in its own host-managed compose, separate from every control plane, so no
 deploy — CI's or Komodo's — can take down the route used to repair it.
 
@@ -96,9 +102,10 @@ deploy — CI's or Komodo's — can take down the route used to repair it.
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | The control plane: clones this repo on the server and deploys every stack above from it. Host-managed, never CI-deployed |
 | [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch, RAG parser + pgvector | Chat front-end over a Microsoft Foundry deployment. A Komodo-owned stack with checkout-mounted config; secret delivery remains under evaluation |
 
-One more stack runs on the server but is deliberately **not** defined here:
+Two more stacks run on the server but are deliberately **not** defined here.
+The first,
 [traktv-tg-bot](https://github.com/lorainemg/traktv-tg-bot) (my Telegram bot
-for Trakt.tv + Postgres 17 + Aspire dashboard) generates its compose file
+for Trakt.tv + Postgres 17 + Aspire dashboard), generates its compose file
 with .NET Aspire and deploys itself from its own repo's CI through the Komodo
 API: a `trakt-tg-bot` Stack in `file_contents` mode, filled and deployed by CI
 with a service-user key that has Write on that one stack and nothing else —
@@ -110,6 +117,16 @@ network to collect telemetry). One sharp edge to know: Aspire derives the Postgr
 name from an apphost hash, so an Aspire CLI update can silently point the stack
 at a fresh empty volume — the old data survives under the previous name, and
 the fix is naming the volume explicitly in the AppHost.
+
+The second is **group-split** (`group-split-web`, `api`, `keycloak`, Postgres
+and an Aspire dashboard), which follows the same pattern from its own repo's
+CI. Its Stack is likewise absent from `komodo/stacks.toml` for the same reason
+the bot's is, and unlike the bot it *is* published: its `web` container joins
+`internal`, so [config/caddy/Caddyfile](config/caddy/Caddyfile) reverse-proxies
+`groupsplit.<domain>` to `group-split-web:8080`. That one line is the whole
+seam — the compose file, the image tags and the other three containers belong
+to that repo. Its Keycloak is not published, so browser-facing login is not
+reachable from outside the LAN yet (see [LEARNING.md](LEARNING.md)).
 
 Highlights:
 
