@@ -626,14 +626,20 @@ git commit -m "stop publishing the home registry now that images live in ghcr"
 git push
 ```
 
-- [ ] **Step 6: Verify the route is gone**
+- [x] **Step 6: Verify the route is gone** — done 2026-09-06, and **the check as
+  written was wrong.**
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://registry.sussman.win/v2/_catalog
+curl -sS -D - -o /dev/null https://registry.sussman.win/v2/_catalog
 ```
 
-  Expected: not 200. A 200 with a JSON catalogue means the `config` stack has not
-  redeployed yet — check Komodo before assuming failure.
+  It still answers **200**, with `content-length: 0` and no catalogue. That is
+  Caddy's reply for a `Host` it has no site block for, not evidence the route
+  survived. The status code alone cannot tell "removed" from "still proxying";
+  the body can. Before: `["alpine","app","traktv-tg-bot/bot"]`. After: empty.
+  Confirmed underneath by `docker exec config-caddy grep -c registry.sussman.win
+  /etc/caddy/Caddyfile` → 0, and Caddy's log line `config file changed;
+  reloading`.
 
 ---
 
@@ -673,14 +679,8 @@ ssh home 'docker ps -a --filter name=registry --format "{{.Names}}"'
   The `alpine` and `app` images in the old catalogue are not migrated; they die
   with this volume.
 
-- [ ] **Step 4: Commit**
-
-```bash
-cd /mnt/Data/work/homelab
-git add LEARNING.md
-git commit -m "note when to delete the old registry volume"
-git push
-```
+- [x] **Step 4: Commit** — folded into the plan's single PR (#12); the volume
+  note is in LEARNING.md's Next list, dated 2026-10-06.
 
 ### Task 7: Make `config-agent` private too
 
@@ -711,7 +711,8 @@ Run all four. The migration is done when every one passes:
 
 ```bash
 # 1. The old registry is unreachable from the internet.
-curl -s -o /dev/null -w '%{http_code}\n' https://registry.sussman.win/v2/_catalog   # not 200
+# Read the BODY, not the status: an unmatched Host gets an empty 200 from Caddy.
+curl -s https://registry.sussman.win/v2/_catalog                                    # empty, no catalogue
 
 # 2. A stranger cannot pull either app's images.
 docker logout ghcr.io

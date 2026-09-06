@@ -385,6 +385,17 @@ start of a session; update when a concept lands or a new gap appears.
   both pages were right about different cases, and the plan quoted the wrong
   one. (2026-09-06)
 
+- **Caddy answers an empty 200 for a Host it has no site block for** — so "did
+  removing the route work?" cannot be answered by a status code. After the
+  `registry.sussman.win` block left the Caddyfile, the plan's check
+  (`-w '%{http_code}'`, expecting not-200) still read 200 and looked like a
+  failed decommission; what had actually changed was the body, from
+  `["alpine","app","traktv-tg-bot/bot"]` to `content-length: 0`. A 404 comes
+  only from the tunnel's ingress list for a hostname it has no rule for, which
+  is a different layer and a later step. The general shape, and this repo keeps
+  meeting it: assert on the signal that separates the two outcomes you care
+  about, not the one that is easiest to write. (2026-09-06)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
