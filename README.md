@@ -36,7 +36,6 @@ flowchart LR
         HA[Home Assistant]
         GRAFANA[Grafana]
         KOMODO[Komodo]
-        REGISTRY[Docker registry]
         LIBRECHAT[LibreChat]
         GROUPSPLIT[GroupSplit]
     end
@@ -45,7 +44,6 @@ flowchart LR
     CADDY --> HA
     CADDY --> GRAFANA
     CADDY --> KOMODO
-    CADDY --> REGISTRY
     CADDY --> LIBRECHAT
     CADDY --> GROUPSPLIT
 
@@ -76,7 +74,7 @@ flowchart LR
     TEMPO --> GRAFANA
     PROM -.scrapes.-> HA
     PROM -.scrapes.-> IMMICH
-    REGISTRY -->|pulls| BOT
+    GHCR[GitHub Container Registry] -.pulls.-> BOT
 ```
 
 No inbound ports are open on the router: `cloudflared` maintains an
@@ -102,7 +100,6 @@ deploy — CI's or Komodo's — can take down the route used to repair it.
 | [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML. Deployed by Komodo from this repo on a GitHub webhook, not by CI |
 | [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS). Deployed by Komodo from this repo on a GitHub webhook, not by CI; `ha-config/` and `mosquitto/` are synced separately by config-agent |
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container. Deployed by Komodo from this repo on a GitHub webhook, not by CI; each service's config is bind-mounted from the checkout rather than baked into an image |
-| [registry/](registry/) | Docker Registry 2 | Private image registry for my own builds. Deployed by Komodo from this repo on a GitHub webhook, not by CI — the first stack to move |
 | [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | The control plane: clones this repo on the server and deploys every stack above from it. Host-managed, never CI-deployed |
 | [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch, RAG parser + pgvector | Chat front-end over a Microsoft Foundry deployment. A Komodo-owned stack with checkout-mounted config; secret delivery remains under evaluation |
@@ -144,10 +141,13 @@ Highlights:
   OpenTelemetry Collector that fans out to Tempo, Loki and an Aspire
   dashboard; Prometheus scrapes the host, every container (cAdvisor), Home
   Assistant and Immich; Grafana ties it all together.
-- **Self-hosted CI artifact flow** — the
-  [Trakt bot](https://github.com/lorainemg/traktv-tg-bot)'s images are built
-  by .NET Aspire's deployment pipeline in GitHub Actions and pushed to the
-  self-hosted registry the server then pulls from.
+- **CI artifact flow through GHCR** — the
+  [Trakt bot](https://github.com/lorainemg/traktv-tg-bot)'s and
+  [GroupSplit](https://github.com/Sussman-Club/group-split)'s images are built
+  by .NET Aspire's deployment pipeline in GitHub Actions and pushed to private
+  GHCR packages. Komodo logs the server in with a read-only token before each
+  pull; the account is declared in `komodo/registries.config.toml` and the
+  token lives only in the host's `komodo/.env`.
 
 ## Repo layout
 
@@ -166,9 +166,9 @@ Highlights:
 │   ├── promtail/     promtail.yml
 │   ├── tempo/        tempo.yml
 │   └── otelcol/      otel-collector.yml
-├── registry/         docker-compose.yml (deployed by Komodo, not CI)
+├── registry/         docker-compose.yml (retired 2026-09; kept until the old volume is deleted)
 ├── tunnel/           docker-compose.yml (cloudflared), .env.example
-├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
+├── komodo/           docker-compose.yml (Core + Periphery + Mongo), registries.config.toml, .env.example
 ├── librechat/        docker-compose.yml, config/librechat.yaml, .env.example (deployed by Komodo)
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```

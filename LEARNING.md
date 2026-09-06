@@ -350,6 +350,41 @@ start of a session; update when a concept lands or a new gap appears.
   bolted onto library objects (`server.polls = {}`) are invisible to a
   checker, so declare them on a subclass. (2026-09-05)
 
+- **Komodo's config file is a template, so a credential can be declared in git
+  and stored in `.env`** — the GHCR pull token was headed for the Komodo UI
+  (Settings → Providers), which stores it in Mongo where nothing in the repo
+  records that it exists: the `ignore_services` gap again. Reading the loader
+  crate (`mogh_config` 1.1.0) instead: it serialises the parsed TOML to JSON and
+  replaces every `${VAR}` from the process environment before the final parse,
+  so `komodo/registries.config.toml` holds `token = "${GHCR_PULL_TOKEN}"` and
+  the value lives in the host `komodo/.env` Core already reads. The spec had
+  rejected this route with "the value is a secret that could not live in git
+  either way" — half wrong. Two costs, both met the same evening: Core reads
+  config once at startup, and the first flipped deploy failed with `did not
+  find token in config` because Core had not been recreated (`StartedAt` still
+  read 2026-08-07); and an unset variable expands to `""` with no error. The
+  startup log's sanitizer prints a non-empty token as `####` and an empty one
+  as `""`, so that line is the check — the Providers page and
+  `ListImageRegistryAccounts` read Mongo only and never show a file-based
+  account. (2026-09-06)
+
+- **A package pushed with `GITHUB_TOKEN` inherits the repo's visibility,
+  whatever the "private by default" page says** — the spec quoted GitHub's
+  packages docs ("When you first publish a package … the default visibility is
+  private") and the plan's post-push check expected "already Private". The first
+  push of `ghcr.io/lorainemg/traktv-tg-bot/bot` came out Public: an anonymous
+  token from `ghcr.io/token` listed its tags with a 200. The Actions docs say
+  why, one page over: a workflow-created package "inherits the visibility and
+  permissions model of the repository where the workflow is run", and the bot
+  repo is public. No push flag and no API call changes visibility — it is one
+  click in the package's settings, after which it sticks. An org has two
+  switches under Settings → Packages (Package Creation: Private only; Default
+  Package Settings: no inheritance) that make new packages private from birth;
+  a personal account has neither, so the alternative is pushing with a stored
+  PAT, which is a secret to rotate. The docs-vs-reality lesson with a twist:
+  both pages were right about different cases, and the plan quoted the wrong
+  one. (2026-09-06)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
@@ -388,11 +423,9 @@ start of a session; update when a concept lands or a new gap appears.
   drift because it *is* the record. The trade: Komodo's Mongo becomes less
   load-bearing for disaster recovery, but a wrong `project_name` in TOML empties
   volumes exactly like a wrong one in an API call.
-- Lock down `registry.sussman.win`, or stop using it. Verified 2026-08-25:
-  `GET /v2/` answers 200 with no auth challenge and `/v2/_catalog` returns
-  `["alpine","app","traktv-tg-bot/bot"]` to anyone on the internet. Image names
-  are public and the images are pullable. Decide between putting it behind
-  Cloudflare Access, adding registry auth, or moving those images to GHCR.
+- Delete `docker-registry_registry-data` on or after **2026-10-06** — the last
+  copy of the old registry's images, kept one month as the GHCR migration's
+  undo. `ssh home 'docker volume rm docker-registry_registry-data'`.
 - `group-split`'s `ignore_services` lives only in Komodo's Mongo. Decide
   whether to move it into that repo's `deploy.yml` payload so a rebuild keeps it.
 

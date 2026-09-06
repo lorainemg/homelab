@@ -55,17 +55,10 @@ file_paths = ["config/docker-compose.yml"]
 # Caddy hot-reloads the Caddyfile from the checkout, but a compose edit still
 # has to land; force-deploy so a config-only push is never silently skipped.
 webhook_force_deploy = true
-
-##
-
-[[stack]]
-name = "docker-registry"
-[stack.config]
-server = "Local"
-project_name = "docker-registry"
-repo = "lorainemg/homelab"
-file_paths = ["registry/docker-compose.yml"]
-links = ["https://registry.sussman.win", "http://${HOMELAB_LAN_IP}:5000"]
+# config-agent's image is a private GHCR package. Komodo logs in with the
+# account declared in komodo/registries.config.toml before compose up.
+registry_provider = "ghcr.io"
+registry_account = "lorainemg"
 
 ##
 

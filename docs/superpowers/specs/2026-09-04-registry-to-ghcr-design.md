@@ -1,6 +1,8 @@
 # Retiring `registry.sussman.win` in favour of GHCR
 
-**Status:** design, not yet implemented.
+**Status:** implemented 2026-09-06 — the bot runs from GHCR; group-split's flip is
+Sussman-Club/group-split#163; the decommission is the homelab PR. See the plan for
+what the docs got wrong about package visibility.
 **Supersedes:** the "Lock down `registry.sussman.win`, or stop using it" entry in
 [LEARNING.md](../../../LEARNING.md).
 
@@ -67,6 +69,12 @@ org namespace alike, and this is independent of the linked repo:
 
 **Decision: private, and with inherited permissions removed.**
 
+> *Revised 2026-09-06, after the first push:* private, inheritance **kept**. The
+> package came out Public (see the plan, Task 3) and was flipped by hand; once
+> Private, an anonymous pull is refused, which settles the question below.
+> Removing inheritance would also take away the workflow's automatic push
+> access, so it costs a way to break the deploy and buys nothing.
+
 Private alone is not sufficient here, because of the asymmetry in that quote:
 *permissions* are inherited from the linked repo even though visibility is not. By
 default GHCR does not hold its own access list — it forwards "may this account
@@ -94,14 +102,19 @@ now as a check on work already done, not as the thing the design depends on.
 Komodo authenticates on the server's behalf; there is no host-level `docker login`
 and no credential file for Periphery to find. Two pieces meet:
 
-1. **The credential, once**, entered in the Komodo UI under Settings → Providers
-   (domain `ghcr.io`, username `lorainemg`, a PAT with `read:packages`).
+1. **The credential, once**, as an `[[image_registry]]` block in
+   `komodo/registries.config.toml` (domain `ghcr.io`, username `lorainemg`),
+   mounted read-only into Core at `/config/registries.config.toml`. The token
+   is written as `${GHCR_PULL_TOKEN}`: Komodo's config loader expands `${VAR}`
+   from the process environment before parsing, so the file holds no secret
+   and the value lives in `komodo/.env`, which Core already reads. Core checks
+   Mongo first, then this file (`bin/core/src/helpers/mod.rs`, v2.3.1).
 
-   Komodo also accepts this as an `[[image_registry]]` block in
-   `core.config.toml` / `periphery.config.toml`, which would keep it out of Mongo
-   — but `komodo/docker-compose.yml` mounts no such file, only `env_file: ./.env`.
-   Using it would mean adding a mount and restarting Core, and the value is a
-   secret that could not live in git either way. The UI is the smaller change.
+   The UI route (Settings → Providers) was the first draft. It works live,
+   without a restart, but the account would exist only in Mongo, the gap
+   `LEARNING.md` already lists for `group-split`'s `ignore_services`. Two
+   costs taken instead: a Core restart to load the file, and an unset
+   variable expanding to an empty token with no error.
 
 2. **Each Stack names it**, via two `StackConfig` fields — *verified present in
    v2.3.1*, the tag pinned in [komodo/docker-compose.yml](../../../komodo/docker-compose.yml):
@@ -132,15 +145,16 @@ on the first org push:** that a `Sussman-Club` package does grant this account
 read access without a per-package grant. If it does not, the fix is to add the
 account to that package's access list in its settings — not to widen the token.
 
-The token lands only in Komodo's root-owned host config, matching this repo's
-convention that real secrets live in root-owned host files and never in git.
+The token lands only in the server's `komodo/.env` (mode 600), matching this
+repo's convention that real secrets live in host `.env` files and never in git.
 
 ## Cutover order
 
 The old registry keeps running until GHCR is proven. Nothing here is reversible in
 the other direction once the volume is gone, so the order is load-bearing:
 
-1. Create the PAT and register it in Komodo. **This must come first.** Both apps
+1. Create the PAT, put it in the server's `komodo/.env`, and restart Core.
+   **This must come first.** Both apps
    are Aspire and declare their registry in a single `AddContainerRegistry(...)`
    call that sets the push target *and* the image names written into the compose
    file Komodo deploys — so the flip changes push and pull in the same commit, and

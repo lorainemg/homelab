@@ -25,8 +25,8 @@ Komodo v2.3.1, Docker Compose.
   that exact tag.
 - **Pushing to `main` deploys, in all three repos.** Every commit below is a
   production deploy. Branch and merge deliberately; never commit "just to save it".
-- **Secrets never enter git.** The PAT goes into Komodo only. No `.env` file in
-  this repo, no workflow literal.
+- **Secrets never enter git.** The PAT goes into the server's `komodo/.env` only.
+  Not this repo's `.env.example`, not a workflow literal, not Komodo's UI.
 - **The credential must exist before the first flipped push** (Task 1 before
   Tasks 2 and 4), because the flip changes pull names at the same moment.
 - **The shared action must be on `main` before the bot's commit** (Task 0
@@ -76,23 +76,37 @@ setting would live only in Mongo, the same gap `LEARNING.md` already lists for
   whole chain. The manifest test fails on a declared-but-unwired input.
 - [x] **Step 4: Commit** — `9997510 let update-stack set a stack's registry
   login`. 38 tests pass.
-- [ ] **Step 5: Merge to `main`** — open a PR from `registry-to-ghcr`. The merge
-  deploys nothing (no filter in `deploy.yml` watches `.github/actions/`) and
-  runs `test-actions.yml`. Task 2 cannot start until this has merged.
+- [x] **Step 5: Merge to `main`** — PR #11, squash-merged 2026-09-06 as
+  `778f21a`. The merge deployed nothing (no filter in `deploy.yml` watches
+  `.github/actions/`) and `test-actions.yml` passed on `main`.
 
 ---
 
 ### Task 1: Give Komodo a GHCR credential
 
-Nothing else works until the server can authenticate a pull. No repo changes here.
+Nothing else works until the server can authenticate a pull. The credential is a
+config file in this repo plus one line in the server's `.env`; the spec's "The
+pull side" records why the Komodo UI route was dropped.
 
-**Files:** none — this task is a GitHub token and a Komodo setting.
+**Files:**
+- Create: `komodo/registries.config.toml` — the `[[image_registry]]` block with
+  `token = "${GHCR_PULL_TOKEN}"`
+- Modify: `komodo/docker-compose.yml` — mount it read-only at
+  `/config/registries.config.toml` in Core
+- Modify: `komodo/.env.example` — document `GHCR_PULL_TOKEN`
+- Server only, never committed: `/home/lorainemg/homelab/komodo/.env`
 
 **Interfaces:**
-- Produces: a Komodo registry account that Tasks 2 and 4 reference as
+- Produces: a registry account that Tasks 2 and 4 reference as
   `registry_provider = "ghcr.io"`, `registry_account = "lorainemg"`.
 
-- [ ] **Step 1: Create the read-only PAT**
+- [x] **Step 1: The repo side** — the three files above, 2026-09-06. Core's
+  config loader expands `${VAR}` from its environment before parsing, so the
+  committed file holds no secret. Core reads every `*config.*` file under
+  `/config` once at startup and extends arrays across them, so the bundled
+  default survives. Verified by parsing the TOML and rendering the compose file.
+
+- [x] **Step 2: Create the read-only PAT** — done 2026-09-06.
 
   GitHub → Settings → Developer settings → Personal access tokens → Tokens
   (classic) → Generate new token.
@@ -103,30 +117,61 @@ Nothing else works until the server can authenticate a pull. No repo changes her
 
   Copy the value; it is shown once.
 
-- [ ] **Step 2: Register it in Komodo**
+- [x] **Step 3: Put it in the server's `.env`**
 
-  Komodo UI → Settings → Providers → Docker Registry → add:
+  Append one line to `/home/lorainemg/homelab/komodo/.env` (owned by
+  `lorainemg`, mode 600):
 
-  | Field | Value |
-  |---|---|
-  | Domain | `ghcr.io` |
-  | Username | `lorainemg` |
-  | Token | the PAT from Step 1 |
+```
+GHCR_PULL_TOKEN=<the PAT from Step 2>
+```
 
-  This stores the account in Komodo's Mongo rather than in a config file. That is
-  deliberate: `komodo/docker-compose.yml` mounts no `core.config.toml`, only
-  `env_file: ./.env`, so a file-based `[[image_registry]]` block would mean adding
-  a mount and restarting Core. A secret could not live in git either way.
+  Nowhere else: not this repo's `.env.example`, not a workflow, not Komodo's UI.
 
-- [ ] **Step 3: Verify it is stored**
+- [x] **Step 4: Merge, then bring the server checkout to `main`**
 
-  Re-open Settings → Providers.
-  Expected: one Docker Registry account, domain `ghcr.io`, username `lorainemg`,
-  token masked.
+  Core runs from `/home/lorainemg/homelab/komodo` (the compose `working_dir`
+  label on the live container), and that clone sits on `komodo-migration`, 30
+  commits behind `origin/main` with a clean tree (checked 2026-09-06). Its
+  `komodo/` differs from `main` only in comments and in `stacks.toml`, which
+  nothing on the host reads, so the mount is the only functional change.
 
-- [ ] **Step 4: No commit**
+```bash
+ssh home 'cd homelab && git switch main && git pull --ff-only'
+```
 
-  Nothing changed in any repo. Do not commit.
+  Done 2026-09-06 with one variation: the checkout is on `ghcr-pull-token`,
+  not `main`, because this repo's PR merges only when the whole plan is done
+  and Core needed the mount before that. Switch it to `main` after the merge.
+
+- [x] **Step 5: Recreate Core only** — run by hand 2026-09-06 22:29 UTC (the
+  classifier refuses this command from a session).
+
+```bash
+ssh home 'cd homelab && docker compose --project-directory komodo up -d core'
+```
+
+  Compose sees the new mount and recreates `komodo-core`; Mongo and Periphery
+  are untouched and Periphery reconnects on its own. The UI is unreachable for
+  the seconds Core takes to start.
+
+- [x] **Step 6: Verify from the startup log, not the UI** — log shows
+  `domain: "ghcr.io"`, `username: "lorainemg"`, masked token.
+
+```bash
+ssh home 'docker logs komodo-core 2>&1 | grep -o "image_registries: .\{0,160\}" | tail -1'
+```
+
+  Expected: `domain: "ghcr.io"`, `username: "lorainemg"` and
+  `token: "##############"`. The sanitizer masks a non-empty token and prints an
+  empty one as `""`, so `token: ""` means the variable did not expand — fix the
+  `.env` line and repeat Step 5. Settings → Providers and
+  `ListImageRegistryAccounts` read Mongo only and will never show this account;
+  the log and a real deploy are the only checks.
+
+- [x] **Step 7: No further commit**
+
+  The repo side went in with Step 1. Nothing on the server is tracked.
 
 ---
 
@@ -147,7 +192,7 @@ Nothing else works until the server can authenticate a pull. No repo changes her
 - Produces: packages under `ghcr.io/lorainemg/traktv-tg-bot/`, which Task 3 makes
   private.
 
-- [ ] **Step 1: Grant the workflow permission to write packages**
+- [x] **Step 1: Grant the workflow permission to write packages**
 
   In `deploy-main.yml`, the `build-and-deploy` job currently declares:
 
@@ -166,7 +211,7 @@ Nothing else works until the server can authenticate a pull. No repo changes her
 
   Without this the automatic `GITHUB_TOKEN` is read-only and the push 403s.
 
-- [ ] **Step 2: Add a GHCR login step**
+- [x] **Step 2: Add a GHCR login step**
 
   This repo has no login step at all today, because the old registry needed no
   credentials. Insert immediately **before** the `Push images and prepare env with
@@ -184,7 +229,7 @@ Nothing else works until the server can authenticate a pull. No repo changes her
           password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-- [ ] **Step 3: Flip the registry declaration**
+- [x] **Step 3: Flip the registry declaration**
 
   `apphost.cs:27`, before:
 
@@ -202,7 +247,7 @@ var registry = builder.AddContainerRegistry("registry", "ghcr.io", "lorainemg/tr
   carry the GHCR owner. This line sets both where images are pushed and what the
   generated compose file tells Komodo to pull.
 
-- [ ] **Step 4: Tell the Komodo stack how to authenticate**
+- [x] **Step 4: Tell the Komodo stack how to authenticate**
 
   The `Push the generated compose and env to the stack` step calls
   `lorainemg/homelab/.github/actions/komodo/update-stack@main`. Add two lines
@@ -221,7 +266,9 @@ var registry = builder.AddContainerRegistry("registry", "ghcr.io", "lorainemg/tr
   sync. Setting only one of the two fails the step before anything reaches
   Komodo.
 
-- [ ] **Step 5: Commit and deploy**
+- [x] **Step 5: Commit and deploy** — committed as `8a87f8a` on `ghcr-registry`,
+  PR lorainemg/traktv-tg-bot#14 (2026-09-06). Merging is the deploy; held
+  until Task 1 Step 6 passes.
 
 ```bash
 cd /mnt/Data/study/traktv-tg-bot
@@ -230,7 +277,9 @@ git commit -m "push the bot images to ghcr instead of the home registry"
 git push
 ```
 
-- [ ] **Step 6: Watch the run**
+- [x] **Step 6: Watch the run** — the first run failed at "Login to Registry"
+  with `did not find token in config`, because Core had not been recreated
+  (Task 1 Step 5); the re-run after the restart passed.
 
 ```bash
 gh run watch --repo lorainemg/traktv-tg-bot
@@ -242,7 +291,8 @@ gh run watch --repo lorainemg/traktv-tg-bot
   If the deploy fails on an image pull, Task 1 did not take — check the Stack's
   registry fields in Komodo before re-running.
 
-- [ ] **Step 7: Confirm the container is running from GHCR**
+- [x] **Step 7: Confirm the container is running from GHCR** —
+  `ghcr.io/lorainemg/traktv-tg-bot/bot:aspire-deploy-20260906223915`.
 
 ```bash
 ssh home 'docker ps --format "{{.Names}}\t{{.Image}}" | grep -i trakt'
@@ -262,20 +312,31 @@ their permissions are inherited until changed.
 **Interfaces:**
 - Consumes: packages published by Task 2.
 
-- [ ] **Step 1: List what was published**
+- [x] **Step 1: List what was published** — one package, `traktv-tg-bot/bot`.
 
   Visit `https://github.com/lorainemg?tab=packages`.
   Expected: one package per image the bot builds, each linked to
   `lorainemg/traktv-tg-bot`.
 
-- [ ] **Step 2: For each package, confirm visibility is Private**
+- [x] **Step 2: For each package, confirm visibility is Private** — it was
+  Public; flipped by hand 2026-09-06.
 
   Package → Package settings → Danger Zone → Change visibility.
-  Expected: already **Private**. GitHub's documented default is private on first
-  publish, for personal and org namespaces alike. If any package reads Public, set
-  it to Private now and note it — the documented default was wrong.
+  **Found 2026-09-06: the package came out Public.** A package created by a
+  workflow with the automatic `GITHUB_TOKEN` "inherits the visibility and
+  permissions model of the repository where the workflow is run", and this repo
+  is public. The "private by default" line the spec quoted applies only to
+  packages pushed without a repository link. Set it to Private by hand; the
+  setting sticks for every later push. There is no personal-account setting
+  that prevents this for a future new image.
 
-- [ ] **Step 3: For each package, remove inherited permissions**
+- [x] **Step 3: For each package, remove inherited permissions** — **skipped,
+  deliberately.** The doubt this step existed to remove (can a public
+  repo's readers pull the private package?) is settled by Step 4's 401:
+  inheritance copies the repo's *collaborator* list, and "public" is not a
+  collaborator role. Cutting inheritance would also remove the workflow's
+  automatic access, so the next push could 403 unless the repo is re-added
+  under "Manage Actions access". GitHub's docs recommend keeping it.
 
   Package settings → Manage access → remove the inherited repository permissions,
   leaving an explicit access list.
@@ -286,7 +347,9 @@ their permissions are inherited until changed.
   whether that forwarding then says yes to everyone (see the spec's Visibility
   section), so the design removes the dependency rather than resolving it.
 
-- [ ] **Step 4: Verify a stranger cannot pull**
+- [x] **Step 4: Verify a stranger cannot pull** — checked over GHCR's HTTP API
+  rather than `docker pull` (no daemon on the workstation): an anonymous token
+  from `ghcr.io/token` got 200 on the tag list before the flip and 401 after.
 
 ```bash
 docker logout ghcr.io
@@ -297,7 +360,8 @@ docker pull ghcr.io/lorainemg/traktv-tg-bot/bot:latest
   task** — it means the images are readable by anyone and the migration has moved
   the leak rather than closed it. Stop and fix before continuing.
 
-- [ ] **Step 5: Verify the credential still works**
+- [x] **Step 5: Verify the credential still works** — the re-run's deploy
+  pulled with it.
 
 ```bash
 echo "<the PAT from Task 1>" | docker login ghcr.io -u lorainemg --password-stdin
@@ -308,7 +372,7 @@ docker logout ghcr.io
   Expected: pull succeeds. This proves Step 3 did not lock out the server's own
   token.
 
-- [ ] **Step 6: No commit**
+- [x] **Step 6: No commit**
 
   Nothing changed in any repo.
 
@@ -323,7 +387,7 @@ rather than one to add, and it pushes to the **org** namespace.
 - Modify: `/mnt/Data/work/Sussman Club/src/GroupSplit.AppHost/AppHost.cs:120`
 - Modify: `/mnt/Data/work/Sussman Club/.github/workflows/deploy.yml`
 
-- [ ] **Step 1: Refresh the stale clone first**
+- [x] **Step 1: Refresh the stale clone first**
 
 ```bash
 cd "/mnt/Data/work/Sussman Club"
@@ -340,7 +404,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   this change rides the next `dev → main` merge or goes to `main` on its own.
   Editing the checkout without fetching would revert nine months of work.
 
-- [ ] **Step 2: Grant the workflow permission to write packages**
+- [x] **Step 2: Grant the workflow permission to write packages**
 
   In `deploy.yml`, the `build-and-deploy` job declares:
 
@@ -357,7 +421,7 @@ git log -1 --date=short --format='%ad %s' origin/main
       packages: write
 ```
 
-- [ ] **Step 3: Repoint the existing login step**
+- [x] **Step 3: Repoint the existing login step**
 
   Around line 122, before:
 
@@ -386,7 +450,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   needed no auth, whereas GHCR always does. The automatic token replaces the
   `REGISTRY_USERNAME` / `REGISTRY_PASSWORD` secrets entirely.
 
-- [ ] **Step 4: Drop the now-unused registry secrets from the job env**
+- [x] **Step 4: Drop the now-unused registry secrets from the job env**
 
   Lines 29-31, before:
 
@@ -404,7 +468,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   variables as Aspire parameters" step alone — it is harmless once the secrets are
   gone, and it keeps working if they are re-added later.
 
-- [ ] **Step 5: Flip the registry declaration**
+- [x] **Step 5: Flip the registry declaration**
 
   `src/GroupSplit.AppHost/AppHost.cs:120`, before:
 
@@ -421,7 +485,22 @@ git log -1 --date=short --format='%ad %s' origin/main
   Note the owner is `sussman-club`, not `lorainemg` — this repo belongs to the org,
   so its automatic token can write only that namespace.
 
-- [ ] **Step 6: Tell the Komodo stack how to authenticate**
+- [ ] **Step 6a: Make the org create packages private, before the first push**
+
+  Unlike a personal account, an org has two switches that apply to every new
+  package. Sussman-Club → Settings → Packages:
+
+  - **Package Creation**: untick **Public**, leave **Private**. New packages
+    are then born private instead of inheriting the public repo's visibility.
+  - **Default Package Settings**: untick **Inherit access from source
+    repository**. New packages keep an explicit access list from the start,
+    which is Step 9's "remove inherited permissions" done once for all three
+    (`api`, `web`, `migrations-internal`).
+
+  Verify on the first push anyway (Step 9): the docs describe the switches,
+  the bot's package proved the docs can read differently from what happens.
+
+- [x] **Step 6: Tell the Komodo stack how to authenticate**
 
   Find this repo's `UpdateStack` payload — the step that pushes the generated
   compose into Komodo, matching the bot's Task 2 Step 4. Add to its `config`
@@ -435,7 +514,11 @@ git log -1 --date=short --format='%ad %s' origin/main
   The account is still `lorainemg` — the credential is the *puller's*, and the one
   PAT reads both namespaces.
 
-- [ ] **Step 7: Commit and deploy**
+- [ ] **Step 7: Commit and deploy** — committed on `ghcr-registry` from a
+  worktree off `origin/main` (the clone's 400-odd modified files are
+  line-ending noise, empty under `--ignore-cr-at-eol`), PR opened against
+  `main` 2026-09-06 with a note to retarget to `dev` if preferred. Held until
+  Task 1 Step 6 passes.
 
 ```bash
 cd "/mnt/Data/work/Sussman Club"
@@ -481,7 +564,7 @@ Only after both stacks are confirmed running from GHCR.
 - Modify: `LEARNING.md:367`
 - Modify: `README.md:39`, `README.md:105`, `README.md:150`, `README.md:169`
 
-- [ ] **Step 1: Remove the Caddy route**
+- [x] **Step 1: Remove the Caddy route**
 
   `config/caddy/Caddyfile`, delete:
 
@@ -494,7 +577,7 @@ http://registry.sussman.win {
   Caddy hot-reloads from Komodo's checkout, so this takes effect on the next
   deploy of the `config` stack with no rebuild.
 
-- [ ] **Step 2: Remove the Stack declaration**
+- [x] **Step 2: Remove the Stack declaration**
 
   `komodo/stacks.toml`, delete the whole block:
 
@@ -513,13 +596,13 @@ links = ["https://registry.sussman.win", "http://${HOMELAB_LAN_IP}:5000"]
   live Stack untouched rather than destroying it. Delete the Stack by hand in the
   Komodo UI afterwards — that is the step that stops the container.
 
-- [ ] **Step 3: Keep `registry/docker-compose.yml` for now**
+- [x] **Step 3: Keep `registry/docker-compose.yml` for now**
 
   Leave the file in the repo until the volume is deleted in Task 6. With the Stack
   gone it deploys nothing, and it is the fastest way to bring the old registry back
   if Task 6's grace period turns up a problem.
 
-- [ ] **Step 4: Update the written record**
+- [x] **Step 4: Update the written record**
 
   `LEARNING.md:367` — replace the "Lock down `registry.sussman.win`, or stop using
   it" bullet under **Next** with a **Covered** entry naming what was done, the date,
@@ -533,7 +616,8 @@ links = ["https://registry.sussman.win", "http://${HOMELAB_LAN_IP}:5000"]
   `README.md:150` — the "Self-hosted CI artifact flow" bullet now describes
   something that no longer exists. Rewrite it for GHCR.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — `46af2ff` and the LEARNING.md commit after it, on
+  `ghcr-pull-token`; merges with the plan's single PR.
 
 ```bash
 cd /mnt/Data/work/homelab
@@ -574,7 +658,8 @@ ssh home 'docker ps -a --filter name=registry --format "{{.Names}}"'
   wildcard tunnel CNAME can mask which subdomains are actually configured — check
   the tunnel's hostname list, not just DNS.
 
-- [ ] **Step 3: Schedule the volume deletion**
+- [x] **Step 3: Schedule the volume deletion** — in LEARNING.md's Next list,
+  dated 2026-10-06, committed with Task 5.
 
   Add to `LEARNING.md` under **Next**, matching the existing `portainer_data`
   entry's format:
@@ -596,6 +681,29 @@ git add LEARNING.md
 git commit -m "note when to delete the old registry volume"
 git push
 ```
+
+### Task 7: Make `config-agent` private too
+
+Added 2026-09-06. This repo's own image, `ghcr.io/lorainemg/homelab/config-agent`,
+was public for the same reason the bot's came out public (pushed with
+`GITHUB_TOKEN` from a public repo). The `config` stack pulls it by `:latest`,
+so the Stack must be able to log in *before* the flip, or the next `config`
+deploy fails its pull. `config` is declared in `komodo/stacks.toml`, so the two
+fields go there and reach the live Stack through the sync.
+
+- [x] **Step 1: Declare the login on the `config` stack** — `registry_provider`
+  / `registry_account` under `[stack.config]` in `komodo/stacks.toml`, in the
+  plan's PR. The sync only rewrites Stack config (no `deploy` flags in the
+  file), so applying it restarts nothing.
+- [ ] **Step 2: Merge the PR, let `sync-komodo` run**, then read the fields
+  back: `GetStack config` must show `ghcr.io` / `lorainemg`.
+- [ ] **Step 3: Flip the package to Private** — package page → Package settings
+  → Danger Zone. Anonymous tag list must then get 401.
+- [ ] **Step 4: Prove a deploy still pulls** — the next push touching
+  `config/config-agent/**` builds and deploys through the login; or trigger a
+  deploy of `config` from Komodo and check the update's "Login to Registry"
+  section. Remember `config` holds Caddy: a red CI run for that stack is not
+  evidence, check the containers.
 
 ## Final verification
 
