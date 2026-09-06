@@ -106,7 +106,7 @@ pull side" records why the Komodo UI route was dropped.
   `/config` once at startup and extends arrays across them, so the bundled
   default survives. Verified by parsing the TOML and rendering the compose file.
 
-- [ ] **Step 2: Create the read-only PAT**
+- [x] **Step 2: Create the read-only PAT** — done 2026-09-06.
 
   GitHub → Settings → Developer settings → Personal access tokens → Tokens
   (classic) → Generate new token.
@@ -144,7 +144,8 @@ ssh home 'cd homelab && git switch main && git pull --ff-only'
   not `main`, because this repo's PR merges only when the whole plan is done
   and Core needed the mount before that. Switch it to `main` after the merge.
 
-- [ ] **Step 5: Recreate Core only**
+- [x] **Step 5: Recreate Core only** — run by hand 2026-09-06 22:29 UTC (the
+  classifier refuses this command from a session).
 
 ```bash
 ssh home 'cd homelab && docker compose --project-directory komodo up -d core'
@@ -154,7 +155,8 @@ ssh home 'cd homelab && docker compose --project-directory komodo up -d core'
   are untouched and Periphery reconnects on its own. The UI is unreachable for
   the seconds Core takes to start.
 
-- [ ] **Step 6: Verify from the startup log, not the UI**
+- [x] **Step 6: Verify from the startup log, not the UI** — log shows
+  `domain: "ghcr.io"`, `username: "lorainemg"`, masked token.
 
 ```bash
 ssh home 'docker logs komodo-core 2>&1 | grep -o "image_registries: .\{0,160\}" | tail -1'
@@ -167,7 +169,7 @@ ssh home 'docker logs komodo-core 2>&1 | grep -o "image_registries: .\{0,160\}" 
   `ListImageRegistryAccounts` read Mongo only and will never show this account;
   the log and a real deploy are the only checks.
 
-- [ ] **Step 7: No further commit**
+- [x] **Step 7: No further commit**
 
   The repo side went in with Step 1. Nothing on the server is tracked.
 
@@ -264,7 +266,7 @@ var registry = builder.AddContainerRegistry("registry", "ghcr.io", "lorainemg/tr
   sync. Setting only one of the two fails the step before anything reaches
   Komodo.
 
-- [ ] **Step 5: Commit and deploy** — committed as `8a87f8a` on `ghcr-registry`,
+- [x] **Step 5: Commit and deploy** — committed as `8a87f8a` on `ghcr-registry`,
   PR lorainemg/traktv-tg-bot#14 (2026-09-06). Merging is the deploy; held
   until Task 1 Step 6 passes.
 
@@ -275,7 +277,9 @@ git commit -m "push the bot images to ghcr instead of the home registry"
 git push
 ```
 
-- [ ] **Step 6: Watch the run**
+- [x] **Step 6: Watch the run** — the first run failed at "Login to Registry"
+  with `did not find token in config`, because Core had not been recreated
+  (Task 1 Step 5); the re-run after the restart passed.
 
 ```bash
 gh run watch --repo lorainemg/traktv-tg-bot
@@ -287,7 +291,8 @@ gh run watch --repo lorainemg/traktv-tg-bot
   If the deploy fails on an image pull, Task 1 did not take — check the Stack's
   registry fields in Komodo before re-running.
 
-- [ ] **Step 7: Confirm the container is running from GHCR**
+- [x] **Step 7: Confirm the container is running from GHCR** —
+  `ghcr.io/lorainemg/traktv-tg-bot/bot:aspire-deploy-20260906223915`.
 
 ```bash
 ssh home 'docker ps --format "{{.Names}}\t{{.Image}}" | grep -i trakt'
@@ -307,13 +312,14 @@ their permissions are inherited until changed.
 **Interfaces:**
 - Consumes: packages published by Task 2.
 
-- [ ] **Step 1: List what was published**
+- [x] **Step 1: List what was published** — one package, `traktv-tg-bot/bot`.
 
   Visit `https://github.com/lorainemg?tab=packages`.
   Expected: one package per image the bot builds, each linked to
   `lorainemg/traktv-tg-bot`.
 
-- [ ] **Step 2: For each package, confirm visibility is Private**
+- [x] **Step 2: For each package, confirm visibility is Private** — it was
+  Public; flipped by hand 2026-09-06.
 
   Package → Package settings → Danger Zone → Change visibility.
   **Found 2026-09-06: the package came out Public.** A package created by a
@@ -335,7 +341,9 @@ their permissions are inherited until changed.
   whether that forwarding then says yes to everyone (see the spec's Visibility
   section), so the design removes the dependency rather than resolving it.
 
-- [ ] **Step 4: Verify a stranger cannot pull**
+- [x] **Step 4: Verify a stranger cannot pull** — checked over GHCR's HTTP API
+  rather than `docker pull` (no daemon on the workstation): an anonymous token
+  from `ghcr.io/token` got 200 on the tag list before the flip and 401 after.
 
 ```bash
 docker logout ghcr.io
@@ -346,7 +354,8 @@ docker pull ghcr.io/lorainemg/traktv-tg-bot/bot:latest
   task** — it means the images are readable by anyone and the migration has moved
   the leak rather than closed it. Stop and fix before continuing.
 
-- [ ] **Step 5: Verify the credential still works**
+- [x] **Step 5: Verify the credential still works** — the re-run's deploy
+  pulled with it.
 
 ```bash
 echo "<the PAT from Task 1>" | docker login ghcr.io -u lorainemg --password-stdin
@@ -549,7 +558,7 @@ Only after both stacks are confirmed running from GHCR.
 - Modify: `LEARNING.md:367`
 - Modify: `README.md:39`, `README.md:105`, `README.md:150`, `README.md:169`
 
-- [ ] **Step 1: Remove the Caddy route**
+- [x] **Step 1: Remove the Caddy route**
 
   `config/caddy/Caddyfile`, delete:
 
@@ -562,7 +571,7 @@ http://registry.sussman.win {
   Caddy hot-reloads from Komodo's checkout, so this takes effect on the next
   deploy of the `config` stack with no rebuild.
 
-- [ ] **Step 2: Remove the Stack declaration**
+- [x] **Step 2: Remove the Stack declaration**
 
   `komodo/stacks.toml`, delete the whole block:
 
@@ -581,13 +590,13 @@ links = ["https://registry.sussman.win", "http://${HOMELAB_LAN_IP}:5000"]
   live Stack untouched rather than destroying it. Delete the Stack by hand in the
   Komodo UI afterwards — that is the step that stops the container.
 
-- [ ] **Step 3: Keep `registry/docker-compose.yml` for now**
+- [x] **Step 3: Keep `registry/docker-compose.yml` for now**
 
   Leave the file in the repo until the volume is deleted in Task 6. With the Stack
   gone it deploys nothing, and it is the fastest way to bring the old registry back
   if Task 6's grace period turns up a problem.
 
-- [ ] **Step 4: Update the written record**
+- [x] **Step 4: Update the written record**
 
   `LEARNING.md:367` — replace the "Lock down `registry.sussman.win`, or stop using
   it" bullet under **Next** with a **Covered** entry naming what was done, the date,
@@ -601,7 +610,8 @@ links = ["https://registry.sussman.win", "http://${HOMELAB_LAN_IP}:5000"]
   `README.md:150` — the "Self-hosted CI artifact flow" bullet now describes
   something that no longer exists. Rewrite it for GHCR.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** — `46af2ff` and the LEARNING.md commit after it, on
+  `ghcr-pull-token`; merges with the plan's single PR.
 
 ```bash
 cd /mnt/Data/work/homelab

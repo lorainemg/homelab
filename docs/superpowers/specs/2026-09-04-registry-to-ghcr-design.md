@@ -1,6 +1,8 @@
 # Retiring `registry.sussman.win` in favour of GHCR
 
-**Status:** design, not yet implemented.
+**Status:** implemented 2026-09-06 — the bot runs from GHCR; group-split's flip is
+Sussman-Club/group-split#163; the decommission is the homelab PR. See the plan for
+what the docs got wrong about package visibility.
 **Supersedes:** the "Lock down `registry.sussman.win`, or stop using it" entry in
 [LEARNING.md](../../../LEARNING.md).
 
