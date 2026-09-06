@@ -117,7 +117,7 @@ pull side" records why the Komodo UI route was dropped.
 
   Copy the value; it is shown once.
 
-- [ ] **Step 3: Put it in the server's `.env`**
+- [x] **Step 3: Put it in the server's `.env`**
 
   Append one line to `/home/lorainemg/homelab/komodo/.env` (owned by
   `lorainemg`, mode 600):
@@ -128,7 +128,7 @@ GHCR_PULL_TOKEN=<the PAT from Step 2>
 
   Nowhere else: not this repo's `.env.example`, not a workflow, not Komodo's UI.
 
-- [ ] **Step 4: Merge, then bring the server checkout to `main`**
+- [x] **Step 4: Merge, then bring the server checkout to `main`**
 
   Core runs from `/home/lorainemg/homelab/komodo` (the compose `working_dir`
   label on the live container), and that clone sits on `komodo-migration`, 30
@@ -139,6 +139,10 @@ GHCR_PULL_TOKEN=<the PAT from Step 2>
 ```bash
 ssh home 'cd homelab && git switch main && git pull --ff-only'
 ```
+
+  Done 2026-09-06 with one variation: the checkout is on `ghcr-pull-token`,
+  not `main`, because this repo's PR merges only when the whole plan is done
+  and Core needed the mount before that. Switch it to `main` after the merge.
 
 - [ ] **Step 5: Recreate Core only**
 
@@ -186,7 +190,7 @@ ssh home 'docker logs komodo-core 2>&1 | grep -o "image_registries: .\{0,160\}" 
 - Produces: packages under `ghcr.io/lorainemg/traktv-tg-bot/`, which Task 3 makes
   private.
 
-- [ ] **Step 1: Grant the workflow permission to write packages**
+- [x] **Step 1: Grant the workflow permission to write packages**
 
   In `deploy-main.yml`, the `build-and-deploy` job currently declares:
 
@@ -205,7 +209,7 @@ ssh home 'docker logs komodo-core 2>&1 | grep -o "image_registries: .\{0,160\}" 
 
   Without this the automatic `GITHUB_TOKEN` is read-only and the push 403s.
 
-- [ ] **Step 2: Add a GHCR login step**
+- [x] **Step 2: Add a GHCR login step**
 
   This repo has no login step at all today, because the old registry needed no
   credentials. Insert immediately **before** the `Push images and prepare env with
@@ -223,7 +227,7 @@ ssh home 'docker logs komodo-core 2>&1 | grep -o "image_registries: .\{0,160\}" 
           password: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-- [ ] **Step 3: Flip the registry declaration**
+- [x] **Step 3: Flip the registry declaration**
 
   `apphost.cs:27`, before:
 
@@ -241,7 +245,7 @@ var registry = builder.AddContainerRegistry("registry", "ghcr.io", "lorainemg/tr
   carry the GHCR owner. This line sets both where images are pushed and what the
   generated compose file tells Komodo to pull.
 
-- [ ] **Step 4: Tell the Komodo stack how to authenticate**
+- [x] **Step 4: Tell the Komodo stack how to authenticate**
 
   The `Push the generated compose and env to the stack` step calls
   `lorainemg/homelab/.github/actions/komodo/update-stack@main`. Add two lines
@@ -260,7 +264,9 @@ var registry = builder.AddContainerRegistry("registry", "ghcr.io", "lorainemg/tr
   sync. Setting only one of the two fails the step before anything reaches
   Komodo.
 
-- [ ] **Step 5: Commit and deploy**
+- [ ] **Step 5: Commit and deploy** — committed as `8a87f8a` on `ghcr-registry`,
+  PR lorainemg/traktv-tg-bot#14 (2026-09-06). Merging is the deploy; held
+  until Task 1 Step 6 passes.
 
 ```bash
 cd /mnt/Data/study/traktv-tg-bot
@@ -362,7 +368,7 @@ rather than one to add, and it pushes to the **org** namespace.
 - Modify: `/mnt/Data/work/Sussman Club/src/GroupSplit.AppHost/AppHost.cs:120`
 - Modify: `/mnt/Data/work/Sussman Club/.github/workflows/deploy.yml`
 
-- [ ] **Step 1: Refresh the stale clone first**
+- [x] **Step 1: Refresh the stale clone first**
 
 ```bash
 cd "/mnt/Data/work/Sussman Club"
@@ -379,7 +385,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   this change rides the next `dev → main` merge or goes to `main` on its own.
   Editing the checkout without fetching would revert nine months of work.
 
-- [ ] **Step 2: Grant the workflow permission to write packages**
+- [x] **Step 2: Grant the workflow permission to write packages**
 
   In `deploy.yml`, the `build-and-deploy` job declares:
 
@@ -396,7 +402,7 @@ git log -1 --date=short --format='%ad %s' origin/main
       packages: write
 ```
 
-- [ ] **Step 3: Repoint the existing login step**
+- [x] **Step 3: Repoint the existing login step**
 
   Around line 122, before:
 
@@ -425,7 +431,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   needed no auth, whereas GHCR always does. The automatic token replaces the
   `REGISTRY_USERNAME` / `REGISTRY_PASSWORD` secrets entirely.
 
-- [ ] **Step 4: Drop the now-unused registry secrets from the job env**
+- [x] **Step 4: Drop the now-unused registry secrets from the job env**
 
   Lines 29-31, before:
 
@@ -443,7 +449,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   variables as Aspire parameters" step alone — it is harmless once the secrets are
   gone, and it keeps working if they are re-added later.
 
-- [ ] **Step 5: Flip the registry declaration**
+- [x] **Step 5: Flip the registry declaration**
 
   `src/GroupSplit.AppHost/AppHost.cs:120`, before:
 
@@ -460,7 +466,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   Note the owner is `sussman-club`, not `lorainemg` — this repo belongs to the org,
   so its automatic token can write only that namespace.
 
-- [ ] **Step 6: Tell the Komodo stack how to authenticate**
+- [x] **Step 6: Tell the Komodo stack how to authenticate**
 
   Find this repo's `UpdateStack` payload — the step that pushes the generated
   compose into Komodo, matching the bot's Task 2 Step 4. Add to its `config`
@@ -474,7 +480,11 @@ git log -1 --date=short --format='%ad %s' origin/main
   The account is still `lorainemg` — the credential is the *puller's*, and the one
   PAT reads both namespaces.
 
-- [ ] **Step 7: Commit and deploy**
+- [ ] **Step 7: Commit and deploy** — committed on `ghcr-registry` from a
+  worktree off `origin/main` (the clone's 400-odd modified files are
+  line-ending noise, empty under `--ignore-cr-at-eol`), PR opened against
+  `main` 2026-09-06 with a note to retarget to `dev` if preferred. Held until
+  Task 1 Step 6 passes.
 
 ```bash
 cd "/mnt/Data/work/Sussman Club"
