@@ -316,9 +316,13 @@ their permissions are inherited until changed.
 - [ ] **Step 2: For each package, confirm visibility is Private**
 
   Package → Package settings → Danger Zone → Change visibility.
-  Expected: already **Private**. GitHub's documented default is private on first
-  publish, for personal and org namespaces alike. If any package reads Public, set
-  it to Private now and note it — the documented default was wrong.
+  **Found 2026-09-06: the package came out Public.** A package created by a
+  workflow with the automatic `GITHUB_TOKEN` "inherits the visibility and
+  permissions model of the repository where the workflow is run", and this repo
+  is public. The "private by default" line the spec quoted applies only to
+  packages pushed without a repository link. Set it to Private by hand; the
+  setting sticks for every later push. There is no personal-account setting
+  that prevents this for a future new image.
 
 - [ ] **Step 3: For each package, remove inherited permissions**
 
@@ -465,6 +469,21 @@ git log -1 --date=short --format='%ad %s' origin/main
 
   Note the owner is `sussman-club`, not `lorainemg` — this repo belongs to the org,
   so its automatic token can write only that namespace.
+
+- [ ] **Step 6a: Make the org create packages private, before the first push**
+
+  Unlike a personal account, an org has two switches that apply to every new
+  package. Sussman-Club → Settings → Packages:
+
+  - **Package Creation**: untick **Public**, leave **Private**. New packages
+    are then born private instead of inheriting the public repo's visibility.
+  - **Default Package Settings**: untick **Inherit access from source
+    repository**. New packages keep an explicit access list from the start,
+    which is Step 9's "remove inherited permissions" done once for all three
+    (`api`, `web`, `migrations-internal`).
+
+  Verify on the first push anyway (Step 9): the docs describe the switches,
+  the bot's package proved the docs can read differently from what happens.
 
 - [x] **Step 6: Tell the Komodo stack how to authenticate**
 
