@@ -652,7 +652,8 @@ ssh home 'docker ps -a --filter name=registry --format "{{.Names}}"'
   wildcard tunnel CNAME can mask which subdomains are actually configured — check
   the tunnel's hostname list, not just DNS.
 
-- [ ] **Step 3: Schedule the volume deletion**
+- [x] **Step 3: Schedule the volume deletion** — in LEARNING.md's Next list,
+  dated 2026-10-06, committed with Task 5.
 
   Add to `LEARNING.md` under **Next**, matching the existing `portainer_data`
   entry's format:
