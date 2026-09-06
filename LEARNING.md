@@ -301,6 +301,31 @@ start of a session; update when a concept lands or a new gap appears.
   shell script doing string handling and error control that a language with
   exceptions would do for free? (2026-09-05)
 
+- **Changing an HTTP client changes headers you never wrote** — the actions'
+  first live run failed in both jobs with `HTTP 403: response was not json`.
+  Nothing to do with Komodo, the API key or the new Execute grant: Cloudflare
+  sits in front of `komodo.sussman.win` and bans urllib's default
+  `User-Agent: Python-urllib/3.x`, answering a plain-text `error code: 1010`
+  before the request reaches the server. The hand-rolled `curl` it replaced
+  had never hit this, because curl sends its own agent. The lesson is not
+  "Cloudflare blocks Python" but that a rewrite silently inherits every
+  default of the new library, and the ones that bite are the defaults *nobody
+  in the diff is thinking about* — a User-Agent, a redirect policy, a TLS
+  verification setting. Verified by curling the live host with three agents:
+  `curl/8.5.0` → 401 from Komodo, `Python-urllib/3.12` → 403 from Cloudflare,
+  `homelab-komodo-client` → 401 from Komodo. The stub now replays that block,
+  so losing the header fails the suite instead of a deploy. (2026-09-06)
+
+- **An error message that discards the body discards the diagnosis** — the
+  same failure said `response was not json` and stopped there, so the actual
+  answer (`error code: 1010`) sat one string away for the length of a debugging
+  session. The handler was written to be careful about secrets, which is right
+  for Komodo's own JSON — a stack's `environment` is in those bodies. But a
+  *non-JSON* body cannot be Komodo answering, so the caution had leaked into
+  the one branch where it bought nothing. Worth asking of any `except` that
+  summarises: if this fires in CI at 2am, does the message contain enough to
+  act on, or only enough to know something went wrong? (2026-09-06)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
