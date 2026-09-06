@@ -682,6 +682,29 @@ git commit -m "note when to delete the old registry volume"
 git push
 ```
 
+### Task 7: Make `config-agent` private too
+
+Added 2026-09-06. This repo's own image, `ghcr.io/lorainemg/homelab/config-agent`,
+was public for the same reason the bot's came out public (pushed with
+`GITHUB_TOKEN` from a public repo). The `config` stack pulls it by `:latest`,
+so the Stack must be able to log in *before* the flip, or the next `config`
+deploy fails its pull. `config` is declared in `komodo/stacks.toml`, so the two
+fields go there and reach the live Stack through the sync.
+
+- [x] **Step 1: Declare the login on the `config` stack** — `registry_provider`
+  / `registry_account` under `[stack.config]` in `komodo/stacks.toml`, in the
+  plan's PR. The sync only rewrites Stack config (no `deploy` flags in the
+  file), so applying it restarts nothing.
+- [ ] **Step 2: Merge the PR, let `sync-komodo` run**, then read the fields
+  back: `GetStack config` must show `ghcr.io` / `lorainemg`.
+- [ ] **Step 3: Flip the package to Private** — package page → Package settings
+  → Danger Zone. Anonymous tag list must then get 401.
+- [ ] **Step 4: Prove a deploy still pulls** — the next push touching
+  `config/config-agent/**` builds and deploys through the login; or trigger a
+  deploy of `config` from Komodo and check the update's "Login to Registry"
+  section. Remember `config` holds Caddy: a red CI run for that stack is not
+  evidence, check the containers.
+
 ## Final verification
 
 Run all four. The migration is done when every one passes:
