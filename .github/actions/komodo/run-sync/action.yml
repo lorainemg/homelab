@@ -1,0 +1,51 @@
+name: Komodo run sync
+description: Render a ResourceSync's TOML, push it as the sync's contents, run the sync and wait.
+
+inputs:
+  komodo-url:
+    description: Base URL of Komodo Core.
+    required: true
+  api-key:
+    description: API key for a Komodo service user with Write on this sync.
+    required: true
+  api-secret:
+    description: API secret for that key.
+    required: true
+  sync:
+    description: Name of the ResourceSync.
+    required: true
+  contents-file:
+    description: TOML file to push. Any ${NAME} in it is expanded from `vars`.
+    required: true
+  vars:
+    description: |
+      Values for the ${NAME} placeholders in contents-file, one NAME=value per
+      line. A placeholder with no value here fails the step rather than
+      rendering empty.
+    required: false
+    default: ""
+  timeout:
+    description: Seconds to wait for the sync to finish.
+    required: false
+    default: "300"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KOMODO_URL: ${{ inputs.komodo-url }}
+        KOMODO_API_KEY: ${{ inputs.api-key }}
+        KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        SYNC: ${{ inputs.sync }}
+        CONTENTS_FILE: ${{ inputs.contents-file }}
+        TIMEOUT: ${{ inputs.timeout }}
+        KOMODO_VARS: ${{ inputs.vars }}
+      run: |
+        set -euo pipefail
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
+        python3 "$GITHUB_ACTION_PATH/../client/cli.py" run-sync \
+          --sync "$SYNC" --contents-file "$CONTENTS_FILE" --timeout "$TIMEOUT"

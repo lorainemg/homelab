@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Bring up the two host-managed stacks on a fresh machine: the tunnel and the
 # control plane. Everything else is a Komodo Stack declared in
-# komodo/stacks.toml, which the seed step below points Komodo at.
+# komodo/stacks.toml, which the seed step below renders and pushes into Komodo.
 #
 # Prerequisites:
 #   - Docker Engine + Compose plugin installed
+#   - python3 and jq on this machine, to render komodo/stacks.toml
+#   - HOMELAB_LAN_IP set to this server's LAN address, for the same render
 #   - A data disk mounted at $DATA_ROOT (default /data) holding service state
 #   - tunnel/.env and komodo/.env created from their .env.example files
 set -euo pipefail
@@ -70,19 +72,28 @@ wait_for_core() {
 }
 
 # Komodo's Stacks are declared in komodo/stacks.toml, but the ResourceSync
-# object that points Komodo at that file lives only in Mongo and cannot
-# declare itself. Create it if it is missing, then run the first sync so a
-# fresh machine ends up with every Stack, no UI involved. Safe to re-run.
+# object that holds them lives only in Mongo and cannot declare itself. The
+# file is a template (`${HOMELAB_LAN_IP}` comes from this script's own
+# environment), so it is rendered here by the same library the sync-komodo job
+# in .github/workflows/deploy.yml uses, pushed in as the sync's contents (Komodo never clones this repo
+# for it), and run once so a fresh machine ends up with every Stack, no UI
+# involved. Safe to re-run: an existing sync is left alone, because CI owns
+# its contents from then on.
 seed_resource_sync() {
   echo "==> seeding the resource sync"
   if api /read '{"type":"GetResourceSync","params":{"sync":"homelab"}}' "$JWT" | grep -q '"name":"homelab"'; then
     echo "    already exists — skipping"
     return 0
   fi
-  api /write '{"type":"CreateResourceSync","params":{"name":"homelab","config":{
-    "repo":"lorainemg/homelab","branch":"main",
-    "resource_path":["komodo/stacks.toml"],
-    "managed":false,"delete":false,"webhook_enabled":true}}}' "$JWT" \
+  command -v python3 jq >/dev/null || { echo "!! python3 and jq are needed to render komodo/stacks.toml." >&2; exit 1; }
+  : "${HOMELAB_LAN_IP:?set to the LAN address of this server, e.g. HOMELAB_LAN_IP=172.20.3.194 scripts/bootstrap.sh}"
+  local rendered payload
+  # Same renderer as CI: an unresolved ${NAME} is an error, not an empty link.
+  rendered=$(KOMODO_VARS="HOMELAB_LAN_IP=$HOMELAB_LAN_IP" \
+    python3 .github/actions/komodo/client/cli.py render komodo/stacks.toml)
+  payload=$(jq -n --arg toml "$rendered" '{type:"CreateResourceSync",params:{name:"homelab",config:{
+    file_contents:$toml, managed:false, delete:false, webhook_enabled:false}}}')
+  api /write "$payload" "$JWT" \
     | grep -q '"name":"homelab"' || { echo "!! CreateResourceSync failed." >&2; exit 1; }
   api /execute '{"type":"RunSync","params":{"sync":"homelab"}}' "$JWT" >/dev/null
   echo "    created; first sync started (async — watch it in the Komodo UI)"
@@ -97,7 +108,8 @@ main() {
 
   echo "Tunnel and Komodo are up; komodo/stacks.toml declares the Stacks."
   echo "Still manual: each stack's .env on the host, and the GitHub webhooks"
-  echo "(one per stack + /listener/github/sync/homelab/sync for the sync itself)."
+  echo "(one per stack; the sync has none — CI pushes its contents instead, which"
+  echo "needs the homelab-ci service user with an API key and Write on the sync)."
   echo "The trakt-tg-bot Stack is not seeded here: its own repo's CI creates it,"
   echo "once the trakt-tg-bot-ci service user exists with an API key and Read+Attach on the server."
 }

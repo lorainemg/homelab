@@ -1,0 +1,71 @@
+name: Komodo update stack
+description: Push a stack's compose file, environment and links, creating the stack if it is missing.
+
+inputs:
+  komodo-url:
+    description: Base URL of Komodo Core.
+    required: true
+  api-key:
+    description: API key for a Komodo service user with Write on this stack.
+    required: true
+  api-secret:
+    description: API secret for that key.
+    required: true
+  stack:
+    description: Name of the stack.
+    required: true
+  compose-file:
+    description: Path to a compose file whose contents become the stack's file_contents.
+    required: false
+    default: ""
+  env-file:
+    description: Path to an env file whose contents become the stack's environment.
+    required: false
+    default: ""
+  links:
+    description: Newline-separated links for the stack page, with ${NAME} expanded from `vars`.
+    required: false
+    default: ""
+  vars:
+    description: |
+      Values for the ${NAME} placeholders in links, one NAME=value per line.
+      A placeholder with no value here fails the step rather than rendering
+      empty.
+    required: false
+    default: ""
+  create-if-missing:
+    description: Create the stack before updating it if Komodo does not have it.
+    required: false
+    default: "false"
+  server:
+    description: Server to attach a newly created stack to. Only used when creating.
+    required: false
+    default: Local
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KOMODO_URL: ${{ inputs.komodo-url }}
+        KOMODO_API_KEY: ${{ inputs.api-key }}
+        KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        STACK: ${{ inputs.stack }}
+        SERVER: ${{ inputs.server }}
+        COMPOSE_FILE: ${{ inputs.compose-file }}
+        ENV_FILE: ${{ inputs.env-file }}
+        LINKS: ${{ inputs.links }}
+        CREATE_IF_MISSING: ${{ inputs.create-if-missing }}
+        KOMODO_VARS: ${{ inputs.vars }}
+      run: |
+        set -euo pipefail
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
+        args=(update-stack --stack "$STACK" --server "$SERVER")
+        [[ -n $COMPOSE_FILE ]] && args+=(--compose-file "$COMPOSE_FILE")
+        [[ -n $ENV_FILE ]] && args+=(--env-file "$ENV_FILE")
+        [[ -n $LINKS ]] && args+=(--links "$LINKS")
+        [[ $CREATE_IF_MISSING == true ]] && args+=(--create-if-missing)
+        python3 "$GITHUB_ACTION_PATH/../client/cli.py" "${args[@]}"

@@ -56,18 +56,51 @@ jobs:
       # The image must exist in GHCR before Komodo pulls it. This step is what
       # closes the build/deploy race: same job, strictly after the build.
       #
-      # The body must carry a `ref` matching the Stack's branch — Komodo's
-      # listener filters on it, and an empty `{}` is silently ignored while
-      # still returning 200 (verified 2026-08-23 against the monitoring stack).
+      # The action waits for Komodo's Update to finish, so a green step here
+      # means the stack actually came up -- unlike the webhook listener this
+      # replaced, which returned 200 on acceptance and never reported back.
       - name: Tell Komodo to deploy config
         if: github.event_name == 'workflow_dispatch' || steps.images.outputs.config_agent == 'true'
-        run: |
-          body='{"ref":"refs/heads/main"}'
-          sig=$(printf '%s' "$body" \
-            | openssl dgst -sha256 -hmac '${{ secrets.KOMODO_WEBHOOK_SECRET }}' \
-            | cut -d' ' -f2)
-          curl -sf -X POST "${{ secrets.KOMODO_URL }}/listener/github/stack/config/deploy" \
-            -H 'Content-Type: application/json' \
-            -H "X-Hub-Signature-256: sha256=$sig" \
-            -H 'X-GitHub-Event: push' \
-            -d "$body"
+        uses: ./.github/actions/komodo/deploy-stack
+        with:
+          komodo-url: ${{ secrets.KOMODO_URL }}
+          api-key: ${{ secrets.KOMODO_API_KEY }}
+          api-secret: ${{ secrets.KOMODO_API_SECRET }}
+          stack: config
+
+  # Komodo's Stacks are declared in komodo/stacks.toml, but Komodo never reads
+  # that file itself. Its `links` field cannot reference a variable, so the
+  # file is a template: this job fills in `${HOMELAB_LAN_IP}` from the `vars`
+  # input below, pushes the result into the `homelab` ResourceSync as its
+  # contents, runs the sync and waits for it. Chosen over committing a
+  # rendered copy back to the repo so there is one stacks.toml in git.
+  #
+  # Both jobs hold the Komodo API key of the `homelab-ci` service user, which
+  # is Write on this sync and Execute on `config` and nothing else -- but the
+  # sync defines every Stack, post_deploy commands included, so treat that key
+  # as the most valuable secret in this repo.
+  sync-komodo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: sync
+        with:
+          filters: |
+            stacks:
+              - 'komodo/stacks.toml'
+              # The LAN IP is stated in the sync step below, so editing it is
+              # editing this file -- which has to re-run the sync.
+              - '.github/workflows/deploy.yml'
+
+      - name: Render stacks.toml and apply it
+        if: github.event_name == 'workflow_dispatch' || steps.sync.outputs.stacks == 'true'
+        uses: ./.github/actions/komodo/run-sync
+        with:
+          komodo-url: ${{ secrets.KOMODO_URL }}
+          api-key: ${{ secrets.KOMODO_API_KEY }}
+          api-secret: ${{ secrets.KOMODO_API_SECRET }}
+          sync: homelab
+          contents-file: komodo/stacks.toml
+          vars: HOMELAB_LAN_IP=172.20.3.194

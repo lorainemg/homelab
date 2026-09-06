@@ -239,6 +239,67 @@ start of a session; update when a concept lands or a new gap appears.
   hand-made ones) and one in this repo (the Caddyfile). The README said the
   tunnel "routes `*.{domain}` to Caddy", which was half the story and would have
   sent a future me hunting in Caddy for a 404 Caddy never issued. (2026-09-03)
+- **A file Komodo reads verbatim cannot hold a variable, so the render moved
+  to CI — and a standing credential came with it** — `links` is outside
+  Komodo's interpolation and the sync applies `stacks.toml` word for word, so
+  the server's LAN address sat in five links here and in the bot's workflow.
+  Now `stacks.toml` is a template, `komodo/vars.env` holds the value once, and
+  the `sync-komodo` job renders with `envsubst`, pushes the result into the
+  sync as contents (a sync with no `repo` and no `files_on_host` reads its
+  `file_contents`, `sync/remote.rs`) and runs it. Rejected on the way: a Komodo
+  Variable (a seventh copy nothing could reference) and committing a rendered
+  copy back (two `stacks.toml` in git). The cost, taken with eyes open: CI now
+  holds an API key that can rewrite every Stack, `post_deploy` commands
+  included, where before it held a webhook secret that could only redeploy.
+  Scoped to a `homelab-ci` service user with Write on the one sync. (2026-09-03)
+  *Superseded 2026-09-05: `vars.env` is gone and the render happens in the
+  `run-sync` action, from a `vars` input the workflow states — see the entry
+  below.*
+
+- **`$GITHUB_ACTION_PATH` is how one action reaches another file in its own
+  repo** — a composite action cannot `uses: ./../lib`, because a relative
+  `uses:` resolves against the *caller's* workspace, which for a cross-repo
+  call is a different repo entirely. What does work: GitHub checks out the
+  action's whole repository, not just the action's directory, so
+  `$GITHUB_ACTION_PATH/../client/cli.py` is on disk and runnable. That single
+  fact is what allows three actions (`deploy-stack`, `update-stack`,
+  `run-sync`) to sit over one shared Python client instead of three copies of
+  the same curl. (2026-09-05)
+
+- **Code travels with a shared action; configuration must not** — the first
+  design put `vars.env` (holding the server's LAN address) inside the action
+  directory, so every caller would get the value for free by the same
+  checkout-the-whole-repo rule above. It removes the duplication, and it is
+  still wrong: the bot repo would then vendor a fact about this house along
+  with the tool. Now each workflow passes `vars: HOMELAB_LAN_IP=…` and the
+  client reads it from `KOMODO_VARS`. The tell for this smell is asking what a
+  second, unrelated caller would inherit. One consequence worth remembering:
+  configuration that moves takes its change-detection with it — with the
+  address living in `deploy.yml`, the `paths-filter` has to watch `deploy.yml`,
+  or editing the IP would push and silently skip the sync. (2026-09-05)
+
+- **`${{ }}` in a `run:` block is a shell injection, not a variable** — GitHub
+  substitutes expressions into the *text* of the script before bash sees it, so
+  `--stack '${{ inputs.stack }}'` with an input containing a single quote closes
+  the quote and runs the rest as commands. Demonstrated on the first draft of
+  these actions: an input of `x'; echo INJECTED; '` executed. The fix is
+  mechanical — every input goes in the step's `env:` block and is referenced as
+  `"$VAR"`, which bash expands at runtime with no re-parsing. Worth internalising
+  because the vulnerable form reads as ordinary quoting and looks fine in review;
+  the tell is not the quotes, it is `${{` appearing anywhere below `run:`.
+  (2026-09-05)
+
+- **The bug you keep making is a property of the language, not of you** — the
+  first version of this client was bash, and its review found three defects:
+  a function returning non-zero aborted its caller under `set -e` (so the
+  missing-stack probe killed the step it existed to inform), a secret-leak
+  test that could never fail because it drove the success path where nothing
+  is printed, and `envsubst` needing an explicit name list or it eats any `$`
+  in a compose file. The call-poll-check logic was correct both times. Rewrote
+  it in Python: same design, standard library only, and that entire class of
+  mistake stops existing. Worth asking early, not after the review: is this
+  shell script doing string handling and error control that a language with
+  exceptions would do for free? (2026-09-05)
 
 ## Shaky
 

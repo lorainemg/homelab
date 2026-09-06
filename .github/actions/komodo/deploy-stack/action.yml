@@ -1,0 +1,39 @@
+name: Komodo deploy stack
+description: Deploy a Komodo stack and wait for the result, failing on Komodo's own error.
+
+inputs:
+  komodo-url:
+    description: Base URL of Komodo Core.
+    required: true
+  api-key:
+    description: API key for a Komodo service user with Execute on this stack.
+    required: true
+  api-secret:
+    description: API secret for that key.
+    required: true
+  stack:
+    description: Name of the stack to deploy.
+    required: true
+  timeout:
+    description: Seconds to wait for the deploy to finish.
+    required: false
+    default: "300"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        KOMODO_URL: ${{ inputs.komodo-url }}
+        KOMODO_API_KEY: ${{ inputs.api-key }}
+        KOMODO_API_SECRET: ${{ inputs.api-secret }}
+        STACK: ${{ inputs.stack }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        set -euo pipefail
+        # Every input reaches the script as an environment variable, never as a
+        # ${{ }} interpolated into the script text. GitHub substitutes those
+        # before bash runs, so an input containing a single quote would close
+        # the quoting and the rest would execute as commands.
+        python3 "$GITHUB_ACTION_PATH/../client/cli.py" deploy-stack \
+          --stack "$STACK" --timeout "$TIMEOUT"

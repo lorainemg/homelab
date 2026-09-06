@@ -1,0 +1,19 @@
+name: Test actions
+
+on:
+  push:
+    paths:
+      - '.github/actions/komodo/**'
+      - '.github/workflows/test-actions.yml'
+  pull_request:
+    paths:
+      - '.github/actions/komodo/**'
+  workflow_dispatch:
+
+jobs:
+  komodo-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the client tests against the stub server
+        run: python3 -m unittest discover -s .github/actions/komodo/client/tests -v
