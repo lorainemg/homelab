@@ -60,9 +60,12 @@ runs:
       run: |
         set -euo pipefail
         # Every input reaches the script as an environment variable, never as a
-        # ${{ }} interpolated into the script text. GitHub substitutes those
-        # before bash runs, so an input containing a single quote would close
-        # the quoting and the rest would execute as commands.
+        # GitHub expression interpolated into the script text. GitHub
+        # substitutes those before bash runs, so an input containing a single
+        # quote would close the quoting and run the rest as commands. (Do not
+        # write the expression syntax literally here either -- GitHub parses
+        # this whole block looking for it, and an empty one fails to load the
+        # action.)
         args=(update-stack --stack "$STACK" --server "$SERVER")
         [[ -n $COMPOSE_FILE ]] && args+=(--compose-file "$COMPOSE_FILE")
         [[ -n $ENV_FILE ]] && args+=(--env-file "$ENV_FILE")
