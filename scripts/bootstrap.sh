@@ -90,7 +90,7 @@ seed_resource_sync() {
   local rendered payload
   # Same renderer as CI: an unresolved ${NAME} is an error, not an empty link.
   rendered=$(KOMODO_VARS="HOMELAB_LAN_IP=$HOMELAB_LAN_IP" \
-    python3 .github/actions/komodo/lib/komodo.py render komodo/stacks.toml)
+    python3 .github/actions/komodo/client/cli.py render komodo/stacks.toml)
   payload=$(jq -n --arg toml "$rendered" '{type:"CreateResourceSync",params:{name:"homelab",config:{
     file_contents:$toml, managed:false, delete:false, webhook_enabled:false}}}')
   api /write "$payload" "$JWT" \

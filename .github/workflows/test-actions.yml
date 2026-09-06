@@ -16,4 +16,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run the client tests against the stub server
-        run: python3 -m unittest discover -s .github/actions/komodo/tests -v
+        run: python3 -m unittest discover -s .github/actions/komodo/client/tests -v

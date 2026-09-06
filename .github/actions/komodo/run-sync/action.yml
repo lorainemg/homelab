@@ -47,5 +47,5 @@ runs:
         # ${{ }} interpolated into the script text. GitHub substitutes those
         # before bash runs, so an input containing a single quote would close
         # the quoting and the rest would execute as commands.
-        python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" run-sync \
+        python3 "$GITHUB_ACTION_PATH/../client/cli.py" run-sync \
           --sync "$SYNC" --contents-file "$CONTENTS_FILE" --timeout "$TIMEOUT"

@@ -68,4 +68,4 @@ runs:
         [[ -n $ENV_FILE ]] && args+=(--env-file "$ENV_FILE")
         [[ -n $LINKS ]] && args+=(--links "$LINKS")
         [[ $CREATE_IF_MISSING == true ]] && args+=(--create-if-missing)
-        python3 "$GITHUB_ACTION_PATH/../lib/komodo.py" "${args[@]}"
+        python3 "$GITHUB_ACTION_PATH/../client/cli.py" "${args[@]}"

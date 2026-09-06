@@ -9,6 +9,7 @@ sent to /execute is a test failure here rather than a silent pass in CI.
 """
 import json
 import threading
+import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # Which route each request type belongs on, mirroring the real API.
@@ -113,3 +114,28 @@ class StubKomodo:
     def __exit__(self, *exc):
         self._server.shutdown()
         self._server.server_close()
+
+
+class StubServerTestCase(unittest.TestCase):
+    """Base for any test that needs a live stub: one server per class."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._stub = StubKomodo().__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._stub.__exit__(None, None, None)
+
+    def env(self, **extra):
+        """The environment cli.main() reads, pointed at this class's stub.
+
+        Keyword arguments are merged in, so a test names only the settings it
+        actually cares about (a zero poll interval, a KOMODO_VARS line).
+        """
+        return {
+            "KOMODO_URL": self._stub.url,
+            "KOMODO_API_KEY": "test-key",
+            "KOMODO_API_SECRET": "test-secret",
+            **extra,
+        }

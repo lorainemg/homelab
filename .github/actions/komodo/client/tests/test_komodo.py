@@ -11,27 +11,23 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(_HERE), str(_HERE.parent)]  # stub_komodo, then komodo.py
 
-import komodo                      # noqa: E402
-from stub_komodo import StubKomodo  # noqa: E402
+import komodo                       # noqa: E402
+from stub_komodo import StubServerTestCase  # noqa: E402
 
 
-class KomodoTestCase(unittest.TestCase):
-    """Starts one stub per class and points the client at it."""
+class KomodoTestCase(StubServerTestCase):
+    """Adds a client pointed at the stub the base class started."""
 
     @classmethod
     def setUpClass(cls):
-        cls._stub = StubKomodo().__enter__()
+        super().setUpClass()
         cls.client = komodo.Komodo(
             url=cls._stub.url, api_key="test-key", api_secret="test-secret",
             poll_interval=0,
         )
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._stub.__exit__(None, None, None)
 
 
 class TestStubItself(KomodoTestCase):
@@ -206,112 +202,6 @@ class TestPayloads(KomodoTestCase):
         self.assertEqual(config["repo"], "")
         self.assertEqual(config["branch"], "")
         self.assertEqual(config["resource_path"], [])
-
-
-class TestCli(KomodoTestCase):
-    def _env(self):
-        return {
-            "KOMODO_URL": self._stub.url,
-            "KOMODO_API_KEY": "test-key",
-            "KOMODO_API_SECRET": "test-secret",
-            "KOMODO_POLL_INTERVAL": "0",
-        }
-
-    def test_deploy_stack_returns_zero_on_success(self):
-        with unittest.mock.patch.dict(os.environ, self._env()):
-            self.assertEqual(komodo.main(["deploy-stack", "--stack", "immich"]), 0)
-
-    def test_deploy_stack_returns_one_when_komodo_refuses(self):
-        captured = io.StringIO()
-        with unittest.mock.patch.dict(os.environ, self._env()):
-            with contextlib.redirect_stderr(captured):
-                code = komodo.main(["deploy-stack", "--stack", "fail-me"])
-        self.assertEqual(code, 1)
-        self.assertIn("denied: permission on Stack", captured.getvalue())
-
-    def test_missing_credentials_is_a_clear_error(self):
-        with unittest.mock.patch.dict(os.environ, {}, clear=True):
-            captured = io.StringIO()
-            with contextlib.redirect_stderr(captured):
-                code = komodo.main(["deploy-stack", "--stack", "immich"])
-        self.assertEqual(code, 1)
-        self.assertIn("KOMODO_URL", captured.getvalue())
-
-
-class TestUpdateStackCommand(KomodoTestCase):
-    def _env(self):
-        return {
-            "KOMODO_URL": self._stub.url,
-            "KOMODO_API_KEY": "test-key",
-            "KOMODO_API_SECRET": "test-secret",
-            "KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194",
-        }
-
-    def test_creates_the_stack_when_missing_then_updates_it(self):
-        before = len(self._stub.received)
-        with unittest.mock.patch.dict(os.environ, self._env()):
-            code = komodo.main([
-                "update-stack", "--stack", "missing-stack", "--create-if-missing"])
-        self.assertEqual(code, 0)
-        sent = [r["type"] for r in self._stub.received[before:]]
-        self.assertEqual(sent, ["CreateStack", "UpdateStack"])
-
-    def test_does_not_create_when_the_stack_is_there(self):
-        before = len(self._stub.received)
-        with unittest.mock.patch.dict(os.environ, self._env()):
-            code = komodo.main([
-                "update-stack", "--stack", "immich", "--create-if-missing"])
-        self.assertEqual(code, 0)
-        sent = [r["type"] for r in self._stub.received[before:]]
-        self.assertEqual(sent, ["UpdateStack"])
-
-    def test_links_reach_komodo_expanded(self):
-        before = len(self._stub.received)
-        with unittest.mock.patch.dict(os.environ, self._env()):
-            komodo.main([
-                "update-stack", "--stack", "immich",
-                "--links", "http://${HOMELAB_LAN_IP}:2283"])
-        config = self._stub.received[before]["params"]["config"]
-        self.assertEqual(config["links"], ["http://172.20.3.194:2283"])
-
-
-class TestRunSyncCommand(KomodoTestCase):
-    def _env(self):
-        return {
-            "KOMODO_URL": self._stub.url,
-            "KOMODO_API_KEY": "test-key",
-            "KOMODO_API_SECRET": "test-secret",
-            "KOMODO_POLL_INTERVAL": "0",
-            "KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194",
-        }
-
-    def setUp(self):
-        self.dir = tempfile.TemporaryDirectory()
-        self.toml = Path(self.dir.name) / "stacks.toml"
-        self.toml.write_text('links = ["http://${HOMELAB_LAN_IP}:5000"]\n')
-        self.addCleanup(self.dir.cleanup)
-
-    def test_pushes_rendered_contents_and_clears_the_repo_source(self):
-        before = len(self._stub.received)
-        with unittest.mock.patch.dict(os.environ, self._env()):
-            code = komodo.main([
-                "run-sync", "--sync", "homelab", "--contents-file", str(self.toml)])
-        self.assertEqual(code, 0)
-        pushed = self._stub.received[before]
-        self.assertEqual(pushed["type"], "UpdateResourceSync")
-        config = pushed["params"]["config"]
-        self.assertIn("172.20.3.194", config["file_contents"])
-        self.assertEqual(config["repo"], "")
-
-    def test_render_prints_the_expanded_file_and_contacts_nothing(self):
-        captured = io.StringIO()
-        with unittest.mock.patch.dict(
-                os.environ,
-                {"KOMODO_VARS": "HOMELAB_LAN_IP=172.20.3.194"}, clear=True):
-            with contextlib.redirect_stdout(captured):
-                code = komodo.main(["render", str(self.toml)])
-        self.assertEqual(code, 0)
-        self.assertIn("172.20.3.194", captured.getvalue())
 
 
 if __name__ == "__main__":
