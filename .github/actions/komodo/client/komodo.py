@@ -179,12 +179,15 @@ class Komodo:
                 return False
             raise
 
-    def stack_config(self, compose_file, env_file, links, variables):
+    def stack_config(self, compose_file, env_file, links, variables,
+                     registry_provider=None, registry_account=None):
         """Build an UpdateStack config from whichever inputs were supplied.
 
         A falsy argument means "leave that field alone": omitted fields are
         absent from the payload, so an update never clears something the
-        caller did not mention.
+        caller did not mention. The two registry fields are a pair: Komodo
+        looks the stored account up by provider *and* username, so one
+        without the other is refused here rather than failing the pull later.
         """
         config = {}
         if compose_file:
@@ -195,6 +198,14 @@ class Komodo:
             config["links"] = [
                 line for line in expand(links, variables).splitlines() if line
             ]
+        if bool(registry_provider) != bool(registry_account):
+            raise KomodoError(
+                "registry-provider and registry-account must be given together; "
+                f"got provider={registry_provider!r}, account={registry_account!r}"
+            )
+        if registry_provider:
+            config["registry_provider"] = registry_provider
+            config["registry_account"] = registry_account
         return config
 
     def sync_config(self, toml_file, variables):

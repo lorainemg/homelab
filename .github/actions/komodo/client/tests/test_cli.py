@@ -69,6 +69,17 @@ class TestUpdateStackCommand(StubServerTestCase):
         config = self._stub.received[before]["params"]["config"]
         self.assertEqual(config["links"], [f"http://{LAN_IP}:2283"])
 
+    def test_registry_login_reaches_komodo(self):
+        before = len(self._stub.received)
+        with unittest.mock.patch.dict(os.environ, self.env()):
+            cli.main([
+                "update-stack", "--stack", "immich",
+                "--registry-provider", "ghcr.io",
+                "--registry-account", "lorainemg"])
+        config = self._stub.received[before]["params"]["config"]
+        self.assertEqual(config["registry_provider"], "ghcr.io")
+        self.assertEqual(config["registry_account"], "lorainemg")
+
 
 class TestRunSyncCommand(StubServerTestCase):
     def setUp(self):

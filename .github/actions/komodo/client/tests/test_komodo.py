@@ -210,6 +210,21 @@ class TestPayloads(KomodoTestCase):
             self.VARS)
         self.assertEqual(len(config["links"]), 2)
 
+    def test_carries_the_registry_login_fields(self):
+        config = self.client.stack_config(
+            None, None, None, self.VARS,
+            registry_provider="ghcr.io", registry_account="lorainemg")
+        self.assertEqual(config["registry_provider"], "ghcr.io")
+        self.assertEqual(config["registry_account"], "lorainemg")
+
+    def test_refuses_half_a_registry_login(self):
+        # Komodo looks the stored account up by provider *and* username, so
+        # one without the other can never match.
+        with self.assertRaises(komodo.KomodoError) as caught:
+            self.client.stack_config(
+                None, None, None, self.VARS, registry_provider="ghcr.io")
+        self.assertIn("registry-account", str(caught.exception))
+
     def test_sync_config_clears_the_other_sources(self):
         # Komodo prefers a repo over stored contents, so leaving repo set would
         # silently ignore what we just pushed.

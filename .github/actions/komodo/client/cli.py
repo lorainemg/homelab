@@ -59,7 +59,9 @@ class Cli:
                 },
             })
         config = self.client.stack_config(
-            args.compose_file, args.env_file, args.links, load_vars())
+            args.compose_file, args.env_file, args.links, load_vars(),
+            registry_provider=args.registry_provider,
+            registry_account=args.registry_account)
         self.client.call("write", "UpdateStack", {"id": args.stack, "config": config})
         print(f"stack {args.stack} updated")
 
@@ -92,6 +94,8 @@ class Cli:
         update.add_argument("--compose-file", default=None)
         update.add_argument("--env-file", default=None)
         update.add_argument("--links", default=None)
+        update.add_argument("--registry-provider", default=None)
+        update.add_argument("--registry-account", default=None)
         update.add_argument("--create-if-missing", action="store_true")
         update.add_argument("--server", default="Local")
         update.set_defaults(handler=Cli.update_stack)
