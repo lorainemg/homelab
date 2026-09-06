@@ -44,8 +44,11 @@ runs:
       run: |
         set -euo pipefail
         # Every input reaches the script as an environment variable, never as a
-        # ${{ }} interpolated into the script text. GitHub substitutes those
-        # before bash runs, so an input containing a single quote would close
-        # the quoting and the rest would execute as commands.
+        # GitHub expression interpolated into the script text. GitHub
+        # substitutes those before bash runs, so an input containing a single
+        # quote would close the quoting and run the rest as commands. (Do not
+        # write the expression syntax literally here either -- GitHub parses
+        # this whole block looking for it, and an empty one fails to load the
+        # action.)
         python3 "$GITHUB_ACTION_PATH/../client/cli.py" run-sync \
           --sync "$SYNC" --contents-file "$CONTENTS_FILE" --timeout "$TIMEOUT"
