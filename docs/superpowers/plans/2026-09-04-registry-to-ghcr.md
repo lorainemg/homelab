@@ -330,7 +330,13 @@ their permissions are inherited until changed.
   setting sticks for every later push. There is no personal-account setting
   that prevents this for a future new image.
 
-- [ ] **Step 3: For each package, remove inherited permissions**
+- [x] **Step 3: For each package, remove inherited permissions** — **skipped,
+  deliberately.** The doubt this step existed to remove (can a public
+  repo's readers pull the private package?) is settled by Step 4's 401:
+  inheritance copies the repo's *collaborator* list, and "public" is not a
+  collaborator role. Cutting inheritance would also remove the workflow's
+  automatic access, so the next push could 403 unless the repo is re-added
+  under "Manage Actions access". GitHub's docs recommend keeping it.
 
   Package settings → Manage access → remove the inherited repository permissions,
   leaving an explicit access list.
@@ -366,7 +372,7 @@ docker logout ghcr.io
   Expected: pull succeeds. This proves Step 3 did not lock out the server's own
   token.
 
-- [ ] **Step 6: No commit**
+- [x] **Step 6: No commit**
 
   Nothing changed in any repo.
 

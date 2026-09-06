@@ -69,6 +69,12 @@ org namespace alike, and this is independent of the linked repo:
 
 **Decision: private, and with inherited permissions removed.**
 
+> *Revised 2026-09-06, after the first push:* private, inheritance **kept**. The
+> package came out Public (see the plan, Task 3) and was flipped by hand; once
+> Private, an anonymous pull is refused, which settles the question below.
+> Removing inheritance would also take away the workflow's automatic push
+> access, so it costs a way to break the deploy and buys nothing.
+
 Private alone is not sufficient here, because of the asymmetry in that quote:
 *permissions* are inherited from the linked repo even though visibility is not. By
 default GHCR does not hold its own access list — it forwards "may this account
