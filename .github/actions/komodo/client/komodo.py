@@ -20,6 +20,12 @@ class KomodoError(RuntimeError):
     """Anything Komodo refused, or any response we could not use."""
 
 
+# urllib's default User-Agent is `Python-urllib/3.x`, which Cloudflare blocks
+# outright: the request never reaches Komodo and comes back as HTTP 403 with a
+# plain-text `error code: 1010` body. Komodo itself does not care what this
+# says, so any honest identifier works. Broke the first live run, 2026-09-06.
+USER_AGENT = "homelab-komodo-client"
+
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -90,6 +96,7 @@ class Komodo:
                 "X-Api-Key": self.api_key,
                 "X-Api-Secret": self.api_secret,
                 "Content-Type": "application/json",
+                "User-Agent": USER_AGENT,
             },
             method="POST",
         )
@@ -119,7 +126,11 @@ class Komodo:
         try:
             return json.loads(raw).get("error", "no error field")
         except (ValueError, AttributeError):
-            return "response was not json"
+            # Not Komodo answering, so this cannot hold a stack `environment`:
+            # it is whatever sits in front of it (Cloudflare, Caddy). Show a
+            # little of it -- "response was not json" hides the one clue.
+            text = " ".join(raw.decode("utf-8", "replace").split())
+            return f"non-json response: {text[:120] or 'empty'}"
 
     def await_update(self, update_id, timeout=300):
         """Wait for an Update to finish, and decide whether it worked.
