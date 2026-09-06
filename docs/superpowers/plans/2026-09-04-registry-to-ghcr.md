@@ -25,8 +25,8 @@ Komodo v2.3.1, Docker Compose.
   that exact tag.
 - **Pushing to `main` deploys, in all three repos.** Every commit below is a
   production deploy. Branch and merge deliberately; never commit "just to save it".
-- **Secrets never enter git.** The PAT goes into Komodo only. No `.env` file in
-  this repo, no workflow literal.
+- **Secrets never enter git.** The PAT goes into the server's `komodo/.env` only.
+  Not this repo's `.env.example`, not a workflow literal, not Komodo's UI.
 - **The credential must exist before the first flipped push** (Task 1 before
   Tasks 2 and 4), because the flip changes pull names at the same moment.
 - **The shared action must be on `main` before the bot's commit** (Task 0
@@ -76,23 +76,37 @@ setting would live only in Mongo, the same gap `LEARNING.md` already lists for
   whole chain. The manifest test fails on a declared-but-unwired input.
 - [x] **Step 4: Commit** — `9997510 let update-stack set a stack's registry
   login`. 38 tests pass.
-- [ ] **Step 5: Merge to `main`** — open a PR from `registry-to-ghcr`. The merge
-  deploys nothing (no filter in `deploy.yml` watches `.github/actions/`) and
-  runs `test-actions.yml`. Task 2 cannot start until this has merged.
+- [x] **Step 5: Merge to `main`** — PR #11, squash-merged 2026-09-06 as
+  `778f21a`. The merge deployed nothing (no filter in `deploy.yml` watches
+  `.github/actions/`) and `test-actions.yml` passed on `main`.
 
 ---
 
 ### Task 1: Give Komodo a GHCR credential
 
-Nothing else works until the server can authenticate a pull. No repo changes here.
+Nothing else works until the server can authenticate a pull. The credential is a
+config file in this repo plus one line in the server's `.env`; the spec's "The
+pull side" records why the Komodo UI route was dropped.
 
-**Files:** none — this task is a GitHub token and a Komodo setting.
+**Files:**
+- Create: `komodo/registries.config.toml` — the `[[image_registry]]` block with
+  `token = "${GHCR_PULL_TOKEN}"`
+- Modify: `komodo/docker-compose.yml` — mount it read-only at
+  `/config/registries.config.toml` in Core
+- Modify: `komodo/.env.example` — document `GHCR_PULL_TOKEN`
+- Server only, never committed: `/home/lorainemg/homelab/komodo/.env`
 
 **Interfaces:**
-- Produces: a Komodo registry account that Tasks 2 and 4 reference as
+- Produces: a registry account that Tasks 2 and 4 reference as
   `registry_provider = "ghcr.io"`, `registry_account = "lorainemg"`.
 
-- [ ] **Step 1: Create the read-only PAT**
+- [x] **Step 1: The repo side** — the three files above, 2026-09-06. Core's
+  config loader expands `${VAR}` from its environment before parsing, so the
+  committed file holds no secret. Core reads every `*config.*` file under
+  `/config` once at startup and extends arrays across them, so the bundled
+  default survives. Verified by parsing the TOML and rendering the compose file.
+
+- [ ] **Step 2: Create the read-only PAT**
 
   GitHub → Settings → Developer settings → Personal access tokens → Tokens
   (classic) → Generate new token.
@@ -103,30 +117,55 @@ Nothing else works until the server can authenticate a pull. No repo changes her
 
   Copy the value; it is shown once.
 
-- [ ] **Step 2: Register it in Komodo**
+- [ ] **Step 3: Put it in the server's `.env`**
 
-  Komodo UI → Settings → Providers → Docker Registry → add:
+  Append one line to `/home/lorainemg/homelab/komodo/.env` (owned by
+  `lorainemg`, mode 600):
 
-  | Field | Value |
-  |---|---|
-  | Domain | `ghcr.io` |
-  | Username | `lorainemg` |
-  | Token | the PAT from Step 1 |
+```
+GHCR_PULL_TOKEN=<the PAT from Step 2>
+```
 
-  This stores the account in Komodo's Mongo rather than in a config file. That is
-  deliberate: `komodo/docker-compose.yml` mounts no `core.config.toml`, only
-  `env_file: ./.env`, so a file-based `[[image_registry]]` block would mean adding
-  a mount and restarting Core. A secret could not live in git either way.
+  Nowhere else: not this repo's `.env.example`, not a workflow, not Komodo's UI.
 
-- [ ] **Step 3: Verify it is stored**
+- [ ] **Step 4: Merge, then bring the server checkout to `main`**
 
-  Re-open Settings → Providers.
-  Expected: one Docker Registry account, domain `ghcr.io`, username `lorainemg`,
-  token masked.
+  Core runs from `/home/lorainemg/homelab/komodo` (the compose `working_dir`
+  label on the live container), and that clone sits on `komodo-migration`, 30
+  commits behind `origin/main` with a clean tree (checked 2026-09-06). Its
+  `komodo/` differs from `main` only in comments and in `stacks.toml`, which
+  nothing on the host reads, so the mount is the only functional change.
 
-- [ ] **Step 4: No commit**
+```bash
+ssh home 'cd homelab && git switch main && git pull --ff-only'
+```
 
-  Nothing changed in any repo. Do not commit.
+- [ ] **Step 5: Recreate Core only**
+
+```bash
+ssh home 'cd homelab && docker compose --project-directory komodo up -d core'
+```
+
+  Compose sees the new mount and recreates `komodo-core`; Mongo and Periphery
+  are untouched and Periphery reconnects on its own. The UI is unreachable for
+  the seconds Core takes to start.
+
+- [ ] **Step 6: Verify from the startup log, not the UI**
+
+```bash
+ssh home 'docker logs komodo-core 2>&1 | grep -o "image_registries: .\{0,160\}" | tail -1'
+```
+
+  Expected: `domain: "ghcr.io"`, `username: "lorainemg"` and
+  `token: "##############"`. The sanitizer masks a non-empty token and prints an
+  empty one as `""`, so `token: ""` means the variable did not expand — fix the
+  `.env` line and repeat Step 5. Settings → Providers and
+  `ListImageRegistryAccounts` read Mongo only and will never show this account;
+  the log and a real deploy are the only checks.
+
+- [ ] **Step 7: No further commit**
+
+  The repo side went in with Step 1. Nothing on the server is tracked.
 
 ---
 

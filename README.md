@@ -168,7 +168,7 @@ Highlights:
 │   └── otelcol/      otel-collector.yml
 ├── registry/         docker-compose.yml (deployed by Komodo, not CI)
 ├── tunnel/           docker-compose.yml (cloudflared), .env.example
-├── komodo/           docker-compose.yml (Core + Periphery + Mongo), .env.example
+├── komodo/           docker-compose.yml (Core + Periphery + Mongo), registries.config.toml, .env.example
 ├── librechat/        docker-compose.yml, config/librechat.yaml, .env.example (deployed by Komodo)
 └── scripts/          bootstrap.sh, pre-commit (gitleaks)
 ```

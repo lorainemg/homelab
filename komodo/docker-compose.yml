@@ -40,6 +40,9 @@ services:
       # Core generates a keypair here; periphery reads it from the same volume.
       - keys:/config/keys
       - ${KOMODO_BACKUPS_PATH:-/etc/komodo/backups}:/backups
+      # Registry logins, read once at startup. A single-file mount is fine
+      # here: Core never re-reads it, so the frozen-inode rule doesn't bite.
+      - ./registries.config.toml:/config/registries.config.toml:ro
     networks:
       # `komodo` for its own database and agent; `internal` only so Caddy can
       # resolve komodo-core by name.

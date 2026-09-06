@@ -1,0 +1,21 @@
+# Registry accounts Komodo Core logs in with before `docker compose up`, so
+# the server can pull private images. A Stack picks one by naming its domain
+# and username (`registry_provider` / `registry_account`); Core looks the
+# token up here, after checking Mongo, and hands it to Periphery for the
+# login (bin/core/src/helpers/mod.rs, v2.3.1).
+#
+# This file holds no secret. Komodo's config loader expands `${VAR}` from the
+# process environment before parsing, so the token comes from GHCR_PULL_TOKEN
+# in komodo/.env, which docker-compose.yml already feeds to Core. An unset
+# variable expands to "" with no error — the first sign is a failed login at
+# deploy time — so check the .env before restarting Core.
+#
+# Mounted at /config/registries.config.toml by docker-compose.yml. Core reads
+# every `*config.*` file under /config once at startup and merges them, arrays
+# extended, so this sits beside the bundled default rather than replacing it.
+
+[[image_registry]]
+domain = "ghcr.io"
+accounts = [
+  { username = "lorainemg", token = "${GHCR_PULL_TOKEN}" },
+]
