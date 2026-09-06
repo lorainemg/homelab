@@ -326,6 +326,30 @@ start of a session; update when a concept lands or a new gap appears.
   summarises: if this fires in CI at 2am, does the message contain enough to
   act on, or only enough to know something went wrong? (2026-09-06)
 
+- **A shared action pinned at `@main` is a contract, and a branch can't
+  extend it** — the GHCR plan said "add two fields to the bot's `jq` payload",
+  but by the time it ran the bot deployed through this repo's `update-stack`
+  action, which had no such inputs. So a bot-repo change grew a prerequisite
+  here: two inputs threaded input → `env:` → CLI flag → `stack_config`,
+  test-first at each link, merged to `main` *before* the bot can name them —
+  a `with:` key the action doesn't declare fails the caller's run. The pair
+  check sits at the innermost link on purpose: Komodo looks the stored account
+  up by provider *and* username, so one without the other would skip the login
+  silently and surface minutes later as `docker pull: denied`. Refusing at the
+  boundary makes it a one-line CI failure naming the missing input. (2026-09-05)
+
+- **A strict type checker reads the tests you didn't** — annotating the Komodo
+  client (`mypy --strict`, pinned in `test-actions.yml`) turned up three things
+  38 green tests had not: a `request_timeout: int` that a test passes `0.2`
+  to; a `TestPayloads.setUp` assigning a `Path` to `self.env`, shadowing the
+  inherited `env()` helper (harmless until the first test in that class calls
+  it); and an `assertIsNone` on a function that can only return `None`. Two
+  design points to keep: `StackConfig` is a `TypedDict`, not a dataclass,
+  because "a key the caller didn't set is absent" is what keeps `UpdateStack`
+  partial, and a dict carries that straight into the JSON; and attributes
+  bolted onto library objects (`server.polls = {}`) are invisible to a
+  checker, so declare them on a subclass. (2026-09-05)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately

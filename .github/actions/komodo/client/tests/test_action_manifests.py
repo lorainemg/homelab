@@ -9,13 +9,14 @@ valid YAML. Broke `main` on 2026-09-06.
 """
 import re
 import unittest
+from collections.abc import Iterator
 from pathlib import Path
 
 ACTIONS = Path(__file__).resolve().parent.parent.parent
 RUN_BLOCK = re.compile(r"^(\s*)run: \|")
 
 
-def run_block_lines(text):
+def run_block_lines(text: str) -> Iterator[tuple[int, str]]:
     """Yield (lineno, line) for every line inside a `run: |` block."""
     lines = text.splitlines()
     for i, line in enumerate(lines):
@@ -31,12 +32,12 @@ def run_block_lines(text):
 
 
 class TestActionManifests(unittest.TestCase):
-    def manifests(self):
+    def manifests(self) -> list[Path]:
         found = sorted(ACTIONS.glob("*/action.yml"))
         self.assertTrue(found, f"no action.yml under {ACTIONS}")
         return found
 
-    def test_no_github_expression_inside_a_run_block(self):
+    def test_no_github_expression_inside_a_run_block(self) -> None:
         for manifest in self.manifests():
             for lineno, line in run_block_lines(manifest.read_text()):
                 self.assertNotIn(
@@ -45,7 +46,7 @@ class TestActionManifests(unittest.TestCase):
                     "expression inside run:; pass the value through env: instead",
                 )
 
-    def test_every_input_is_forwarded_through_env(self):
+    def test_every_input_is_forwarded_through_env(self) -> None:
         # The other half of the same rule: an input is only usable if the step
         # puts it in env:, so a declared-but-unwired input is a silent no-op.
         for manifest in self.manifests():

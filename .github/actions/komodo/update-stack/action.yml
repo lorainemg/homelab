@@ -1,5 +1,5 @@
 name: Komodo update stack
-description: Push a stack's compose file, environment and links, creating the stack if it is missing.
+description: Push a stack's compose file, environment, links and registry login, creating the stack if it is missing.
 
 inputs:
   komodo-url:
@@ -33,6 +33,17 @@ inputs:
       empty.
     required: false
     default: ""
+  registry-provider:
+    description: |
+      Registry domain Komodo logs in to before compose up, e.g. `ghcr.io`.
+      Names a Docker Registry account stored in Komodo under Settings →
+      Providers. Set together with `registry-account`.
+    required: false
+    default: ""
+  registry-account:
+    description: Username of that stored account. Set together with `registry-provider`.
+    required: false
+    default: ""
   create-if-missing:
     description: Create the stack before updating it if Komodo does not have it.
     required: false
@@ -55,6 +66,8 @@ runs:
         COMPOSE_FILE: ${{ inputs.compose-file }}
         ENV_FILE: ${{ inputs.env-file }}
         LINKS: ${{ inputs.links }}
+        REGISTRY_PROVIDER: ${{ inputs.registry-provider }}
+        REGISTRY_ACCOUNT: ${{ inputs.registry-account }}
         CREATE_IF_MISSING: ${{ inputs.create-if-missing }}
         KOMODO_VARS: ${{ inputs.vars }}
       run: |
@@ -70,5 +83,7 @@ runs:
         [[ -n $COMPOSE_FILE ]] && args+=(--compose-file "$COMPOSE_FILE")
         [[ -n $ENV_FILE ]] && args+=(--env-file "$ENV_FILE")
         [[ -n $LINKS ]] && args+=(--links "$LINKS")
+        [[ -n $REGISTRY_PROVIDER ]] && args+=(--registry-provider "$REGISTRY_PROVIDER")
+        [[ -n $REGISTRY_ACCOUNT ]] && args+=(--registry-account "$REGISTRY_ACCOUNT")
         [[ $CREATE_IF_MISSING == true ]] && args+=(--create-if-missing)
         python3 "$GITHUB_ACTION_PATH/../client/cli.py" "${args[@]}"
