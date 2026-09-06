@@ -185,9 +185,9 @@ Conventions:
 - **Secrets never in git.** Each stack's secrets live in a `.env` beside its
   checkout on the server (`/etc/komodo/stacks/<stack>/<stack>/.env`, root-owned
   `600`), placed once by hand and never transmitted. GitHub Actions holds only
-  what CI itself needs: `KOMODO_URL`, `KOMODO_WEBHOOK_SECRET`, and an API key
-  for the `homelab-ci` service user, which can write the `homelab` sync and
-  nothing else (see the CI/CD section for why that is not nothing). The one
+  what CI itself needs: `KOMODO_URL` and an API key for the `homelab-ci`
+  service user, which can write the `homelab` sync and deploy the `config`
+  stack, nothing else (see the CI/CD section for why that is not nothing). The one
   file-based secret (Prometheus's HA token) is materialized at container start
   from an env var by its entrypoint. A gitleaks pre-commit hook backstops it.
 
@@ -203,15 +203,16 @@ Conventions:
    `docker network create internal && docker compose --project-directory tunnel up -d && docker compose --project-directory komodo up -d`.
    Point the tunnel's public hostnames — `komodo.<domain>`, `immich.<domain>`,
    `grafana.<domain>`, … — at `http://caddy:80`.
-4. Set the repo's Actions secrets: `KOMODO_URL`, `KOMODO_WEBHOOK_SECRET`
-   (the value of `KOMODO_WEBHOOK_SECRET` in `komodo/.env`), and
+4. Set the repo's Actions secrets: `KOMODO_URL`, and
    `KOMODO_API_KEY` / `KOMODO_API_SECRET` for a `homelab-ci` service user
-   created by hand in Komodo with Write on the `homelab` sync and nothing
-   else. That is everything CI needs — every other secret lives on the host
-   now.
+   created by hand in Komodo with Write on the `homelab` sync and Execute on
+   the `config` stack, nothing else. That is everything CI needs — every other
+   secret lives on the host now. The server's LAN address is not a secret and
+   is stated inline in `deploy.yml`'s `vars` input.
 5. The Stacks themselves need no clicking: bootstrap rendered
    [komodo/stacks.toml](komodo/stacks.toml) (a template — `${HOMELAB_LAN_IP}`
-   comes from `komodo/vars.env`) into the `homelab` ResourceSync's contents and
+   comes from the environment you ran bootstrap with) into the `homelab`
+   ResourceSync's contents and
    ran the first sync, which creates every Stack with its `project_name` **exactly** the
    directory name — so an existing server's volumes (`<project>_<volume>`) are
    adopted rather than recreated empty. The `trakt-tg-bot` Stack is the
@@ -224,9 +225,10 @@ Conventions:
    `/etc/komodo/stacks/<stack>/<stack>/.env` and fill it in, deploy each
    Stack, and add the GitHub webhooks — one per stack at
    `<KOMODO_URL>/listener/github/stack/<name>/deploy` (secret:
-   `KOMODO_WEBHOOK_SECRET`). The sync needs no webhook: the `sync-komodo` job
-   in `deploy.yml` re-renders and re-runs it on every push that touches
-   `stacks.toml` or `vars.env`.
+   `KOMODO_WEBHOOK_SECRET`, from `komodo/.env` — CI does not hold it, only
+   GitHub's per-stack webhooks use it). The sync needs no webhook: the
+   `sync-komodo` job in `deploy.yml` re-renders and re-runs it on every push
+   that touches `stacks.toml` or `deploy.yml`.
 6. Mosquitto users are the one manual step:
    `docker exec mosquitto mosquitto_passwd -c /mosquitto/config/passwd homeassistant`
 7. LibreChat accounts are the other one. Registration is disabled on a
@@ -234,11 +236,12 @@ Conventions:
    `docker exec -it librechat npm run create-user` — there is never a window
    where the login page accepts signups.
 
-`./scripts/bootstrap.sh` automates steps 3 and 5's Komodo half: it creates the
-shared network, refuses to start if `tunnel/.env` or `komodo/.env` is missing,
-brings up those two stacks, then seeds the control plane — the ResourceSync
-holding the rendered `komodo/stacks.toml` (running the first sync, which
-creates every Stack). Steps 4-6's remaining hand work
+`HOMELAB_LAN_IP=<server LAN address> ./scripts/bootstrap.sh` automates steps 3
+and 5's Komodo half: it creates the shared network, refuses to start if
+`tunnel/.env` or `komodo/.env` is missing, brings up those two stacks, then
+seeds the control plane — the ResourceSync holding `komodo/stacks.toml`,
+rendered through the same client the CI actions use (`python3` and `jq` are
+its only prerequisites), and runs the first sync, which creates every Stack. Steps 4-6's remaining hand work
 (`.env` files, webhooks, Mosquitto users) finishes the rebuild. If you need a stack up with no
 control plane at all — Komodo itself broken, say — its compose file still runs
 standalone: `docker compose --project-directory <stack> up -d`, with that
@@ -285,29 +288,45 @@ CI exists for two things that still need a runner. The first is building
    [docker/build-push-action](https://github.com/docker/build-push-action)
    rebuilds and pushes `ghcr.io/lorainemg/homelab/config-agent` (tagged
    `latest` + commit SHA for rollbacks).
-3. **Deploy trigger** — a signed POST to Komodo's listener for the `config`
-   stack, in the same job and strictly after the build, so Komodo can never
-   pull an image GHCR doesn't have yet. The body must carry a `ref` matching
-   the stack's branch: Komodo filters on it and ignores a payload without one
-   while still answering `200`.
+3. **Deploy trigger** — the `deploy-stack` action asks Komodo's API to deploy
+   the `config` stack, in the same job and strictly after the build, so Komodo
+   can never pull an image GHCR doesn't have yet. It then polls the resulting
+   Update until it finishes, so a green step means the stack came up — unlike
+   the signed webhook this replaced, which answered `200` on acceptance and
+   never reported an outcome.
 
 `workflow_dispatch` rebuilds and redeploys unconditionally — the
 fresh-server / changed-agent button.
 
 The second job, `sync-komodo`, is how the Stack definitions reach Komodo.
-Komodo never reads `komodo/stacks.toml` from the repo: the file is a template
-(`${HOMELAB_LAN_IP}` comes from `komodo/vars.env`, so an address that appears
-in every LAN link is written once), and Komodo's `links` field cannot reference
-a variable, so the job renders it with `envsubst`, pushes the result into the
-`homelab` ResourceSync as its contents, runs the sync and waits for the
-result. It re-declares the sync's source fields (`repo`, `branch`,
-`resource_path`) empty on every run, because Komodo prefers a repo over its
-stored contents and would otherwise ignore what CI just pushed. It runs only when `stacks.toml` or `vars.env` changed, or on
-`workflow_dispatch`. This is the one place CI holds a Komodo API key: the
-`homelab-ci` service user has Write on that sync and nothing else — but the
-sync defines every Stack, `post_deploy` commands included, so that key is
-worth more than the webhook secret. Chosen on 2026-09-03 over committing a
-rendered copy back to the repo, to keep a single `stacks.toml` in git.
+Komodo never reads `komodo/stacks.toml` from the repo: the file is a template,
+because Komodo's `links` field cannot reference a variable. The `run-sync`
+action renders it — `${HOMELAB_LAN_IP}` comes from the step's own `vars` input,
+so an address that appears in every LAN link is written once per workflow —
+pushes the result into the `homelab` ResourceSync as its contents, runs the
+sync and waits for the result. It re-declares the sync's source fields
+(`repo`, `branch`, `resource_path`) empty on every run, because Komodo prefers
+a repo over its stored contents and would otherwise ignore what CI just
+pushed. It runs when `stacks.toml` or `deploy.yml` changed (the LAN address
+lives in the workflow, so editing it must re-run the sync), or on
+`workflow_dispatch`. Chosen on 2026-09-03 over committing a rendered copy back
+to the repo, to keep a single `stacks.toml` in git.
+
+Both jobs hold the same Komodo API key: the `homelab-ci` service user has Write
+on the `homelab` sync and Execute on the `config` stack, nothing else. The sync
+defines every Stack, `post_deploy` commands included, so treat that key as the
+most valuable secret in this repo. CI no longer holds `KOMODO_WEBHOOK_SECRET` —
+the per-stack GitHub webhooks Komodo listens on still use it, but nothing in a
+workflow does.
+
+Neither job hand-rolls any of that. `.github/actions/komodo/` holds three
+composite actions — `deploy-stack`, `update-stack`, `run-sync` — over one
+tested Python client (`client/komodo.py` and `client/cli.py`, standard library
+only, `client/tests/` run by
+[test-actions.yml](.github/workflows/test-actions.yml) against a stub Komodo).
+The [trakt bot repo](https://github.com/lorainemg/traktv-tg-bot) uses the same
+actions cross-repo, which is why authentication, the create-if-missing probe
+and the Update-polling loop exist once rather than twice.
 
 Config that can't simply be mounted flows through the `config-agent` container
 in the config stack. HA yaml and `mosquitto.conf` are mounted read-only from
