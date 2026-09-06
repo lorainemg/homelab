@@ -326,7 +326,7 @@ workflow does.
 Neither job hand-rolls any of that. `.github/actions/komodo/` holds three
 composite actions — `deploy-stack`, `update-stack`, `run-sync` — over one
 tested Python client (`client/komodo.py` and `client/cli.py`, standard library
-only, `client/tests/` run by
+only, fully type-annotated; `client/tests/` and a strict `mypy` pass run by
 [test-actions.yml](.github/workflows/test-actions.yml) against a stub Komodo).
 The [trakt bot repo](https://github.com/lorainemg/traktv-tg-bot) uses the same
 actions cross-repo, which is why authentication, the create-if-missing probe

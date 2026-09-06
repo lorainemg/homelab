@@ -7,10 +7,13 @@ behaviour by calling the matching Komodo request type. The stub also checks
 that each type arrives on the route the real server serves it from: a read
 sent to /execute is a test failure here rather than a silent pass in CI.
 """
+from __future__ import annotations
+
 import json
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Any, ClassVar
 
 # Which route each request type belongs on, mirroring the real API.
 ROUTES = {
@@ -24,11 +27,26 @@ ROUTES = {
 }
 
 
+class _StubServer(HTTPServer):
+    """HTTPServer plus the two things the handler records across requests.
+
+    Declared here rather than bolted onto a plain HTTPServer after the fact,
+    so the handler's `self.server.polls` is a field the checker knows about.
+    """
+
+    def __init__(self, address: tuple[str, int]) -> None:
+        super().__init__(address, _Handler)
+        self.polls: dict[str, int] = {}
+        self.received: list[dict[str, Any]] = []  # every write payload, for assertions
+
+
 class _Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
+    server: _StubServer
+
+    def log_message(self, *args: Any) -> None:
         pass  # keep test output clean
 
-    def _send(self, code, payload):
+    def _send(self, code: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
@@ -36,7 +54,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", 0))
         req = json.loads(self.rfile.read(length) or "{}")
         rtype = req.get("type", "")
@@ -110,20 +128,22 @@ class _Handler(BaseHTTPRequestHandler):
 class StubKomodo:
     """Runs the stub on an ephemeral port for the life of a `with` block."""
 
-    def __enter__(self):
-        self._server = HTTPServer(("127.0.0.1", 0), _Handler)
-        self._server.polls = {}
-        self._server.received = []          # every write payload, for assertions
+    _server: _StubServer
+    _thread: threading.Thread
+    url: str
+
+    def __enter__(self) -> StubKomodo:
+        self._server = _StubServer(("127.0.0.1", 0))
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         self.url = f"http://127.0.0.1:{self._server.server_port}"
         return self
 
     @property
-    def received(self):
+    def received(self) -> list[dict[str, Any]]:
         return self._server.received
 
-    def __exit__(self, *exc):
+    def __exit__(self, *exc: object) -> None:
         self._server.shutdown()
         self._server.server_close()
 
@@ -131,15 +151,17 @@ class StubKomodo:
 class StubServerTestCase(unittest.TestCase):
     """Base for any test that needs a live stub: one server per class."""
 
+    _stub: ClassVar[StubKomodo]
+
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         cls._stub = StubKomodo().__enter__()
 
     @classmethod
-    def tearDownClass(cls):
+    def tearDownClass(cls) -> None:
         cls._stub.__exit__(None, None, None)
 
-    def env(self, **extra):
+    def env(self, **extra: str) -> dict[str, str]:
         """The environment cli.main() reads, pointed at this class's stub.
 
         Keyword arguments are merged in, so a test names only the settings it

@@ -14,6 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any, TypedDict
 
 
 class KomodoError(RuntimeError):
@@ -27,6 +28,28 @@ class KomodoError(RuntimeError):
 USER_AGENT = "homelab-komodo-client"
 
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+class StackConfig(TypedDict, total=False):
+    """The `config` of an UpdateStack call.
+
+    Every key is optional: a key that is absent is left untouched on the
+    stack, which is what keeps the update partial. So this is a dict, not a
+    dataclass -- "absent" has to mean absent, all the way into the JSON.
+    """
+    file_contents: str
+    environment: str
+    links: list[str]
+    registry_provider: str
+    registry_account: str
+
+
+class SyncConfig(TypedDict):
+    """The `config` of an UpdateResourceSync call, in contents mode."""
+    file_contents: str
+    repo: str
+    branch: str
+    resource_path: list[str]
 
 
 def load_vars(text: str | None = None) -> dict[str, str]:
@@ -68,14 +91,21 @@ def expand(text: str, variables: dict[str, str]) -> str:
 
 
 class Komodo:
-    def __init__(self, url, api_key, api_secret, poll_interval=5, request_timeout=30):
+    def __init__(
+        self,
+        url: str,
+        api_key: str,
+        api_secret: str,
+        poll_interval: int = 5,
+        request_timeout: float = 30,
+    ) -> None:
         self.url = url.rstrip("/")
         self.api_key = api_key
         self.api_secret = api_secret
         self.poll_interval = poll_interval
         self.request_timeout = request_timeout
 
-    def call(self, route, rtype, params):
+    def call(self, route: str, rtype: str, params: dict[str, Any]) -> dict[str, Any]:
         """POST one request to /read, /write or /execute and return the body.
 
         The error message deliberately carries the request *type* and Komodo's
@@ -102,7 +132,8 @@ class Komodo:
         )
         try:
             with urllib.request.urlopen(request, timeout=self.request_timeout) as response:
-                return json.loads(response.read() or "{}")
+                body_out: dict[str, Any] = json.loads(response.read() or "{}")
+                return body_out
         except urllib.error.HTTPError as error:
             detail = self._error_text(error.read())
             raise KomodoError(
@@ -122,9 +153,9 @@ class Komodo:
             ) from None
 
     @staticmethod
-    def _error_text(raw):
+    def _error_text(raw: bytes) -> str:
         try:
-            return json.loads(raw).get("error", "no error field")
+            return str(json.loads(raw).get("error", "no error field"))
         except (ValueError, AttributeError):
             # Not Komodo answering, so this cannot hold a stack `environment`:
             # it is whatever sits in front of it (Cloudflare, Caddy). Show a
@@ -132,7 +163,7 @@ class Komodo:
             text = " ".join(raw.decode("utf-8", "replace").split())
             return f"non-json response: {text[:120] or 'empty'}"
 
-    def await_update(self, update_id, timeout=300):
+    def await_update(self, update_id: str, timeout: int = 300) -> None:
         """Wait for an Update to finish, and decide whether it worked.
 
         /execute only means *accepted*. Even a permission refusal comes back as
@@ -165,7 +196,7 @@ class Komodo:
                     print(log[stream], file=sys.stderr)
         raise KomodoError(f"komodo update {update_id} failed")
 
-    def stack_exists(self, name):
+    def stack_exists(self, name: str) -> bool:
         """Whether Komodo knows this stack.
 
         A missing stack is HTTP 500 with "Did not find any Stack", not a 404,
@@ -173,14 +204,22 @@ class Komodo:
         failure and is re-raised rather than read as "absent".
         """
         try:
-            return self.call("read", "GetStack", {"stack": name}).get("name") == name
+            stack = self.call("read", "GetStack", {"stack": name})
+            return bool(stack.get("name") == name)
         except KomodoError as error:
             if "Did not find any Stack" in str(error):
                 return False
             raise
 
-    def stack_config(self, compose_file, env_file, links, variables,
-                     registry_provider=None, registry_account=None):
+    def stack_config(
+        self,
+        compose_file: str | None,
+        env_file: str | None,
+        links: str | None,
+        variables: dict[str, str],
+        registry_provider: str | None = None,
+        registry_account: str | None = None,
+    ) -> StackConfig:
         """Build an UpdateStack config from whichever inputs were supplied.
 
         A falsy argument means "leave that field alone": omitted fields are
@@ -189,7 +228,7 @@ class Komodo:
         looks the stored account up by provider *and* username, so one
         without the other is refused here rather than failing the pull later.
         """
-        config = {}
+        config: StackConfig = {}
         if compose_file:
             config["file_contents"] = Path(compose_file).read_text()
         if env_file:
@@ -203,12 +242,12 @@ class Komodo:
                 "registry-provider and registry-account must be given together; "
                 f"got provider={registry_provider!r}, account={registry_account!r}"
             )
-        if registry_provider:
+        if registry_provider and registry_account:
             config["registry_provider"] = registry_provider
             config["registry_account"] = registry_account
         return config
 
-    def sync_config(self, toml_file, variables):
+    def sync_config(self, toml_file: str, variables: dict[str, str]) -> SyncConfig:
         """Build the config for a contents-mode ResourceSync.
 
         repo, branch and resource_path are cleared every time: Komodo picks its

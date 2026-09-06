@@ -20,11 +20,11 @@ VARS = f"HOMELAB_LAN_IP={LAN_IP}"
 
 
 class TestDeployStackCommand(StubServerTestCase):
-    def test_returns_zero_on_success(self):
+    def test_returns_zero_on_success(self) -> None:
         with unittest.mock.patch.dict(os.environ, self.env(KOMODO_POLL_INTERVAL="0")):
             self.assertEqual(cli.main(["deploy-stack", "--stack", "immich"]), 0)
 
-    def test_returns_one_when_komodo_refuses(self):
+    def test_returns_one_when_komodo_refuses(self) -> None:
         captured = io.StringIO()
         with unittest.mock.patch.dict(os.environ, self.env(KOMODO_POLL_INTERVAL="0")):
             with contextlib.redirect_stderr(captured):
@@ -32,7 +32,7 @@ class TestDeployStackCommand(StubServerTestCase):
         self.assertEqual(code, 1)
         self.assertIn("denied: permission on Stack", captured.getvalue())
 
-    def test_missing_credentials_is_a_clear_error(self):
+    def test_missing_credentials_is_a_clear_error(self) -> None:
         with unittest.mock.patch.dict(os.environ, {}, clear=True):
             captured = io.StringIO()
             with contextlib.redirect_stderr(captured):
@@ -42,7 +42,7 @@ class TestDeployStackCommand(StubServerTestCase):
 
 
 class TestUpdateStackCommand(StubServerTestCase):
-    def test_creates_the_stack_when_missing_then_updates_it(self):
+    def test_creates_the_stack_when_missing_then_updates_it(self) -> None:
         before = len(self._stub.received)
         with unittest.mock.patch.dict(os.environ, self.env(KOMODO_VARS=VARS)):
             code = cli.main([
@@ -51,7 +51,7 @@ class TestUpdateStackCommand(StubServerTestCase):
         sent = [r["type"] for r in self._stub.received[before:]]
         self.assertEqual(sent, ["CreateStack", "UpdateStack"])
 
-    def test_does_not_create_when_the_stack_is_there(self):
+    def test_does_not_create_when_the_stack_is_there(self) -> None:
         before = len(self._stub.received)
         with unittest.mock.patch.dict(os.environ, self.env(KOMODO_VARS=VARS)):
             code = cli.main([
@@ -60,7 +60,7 @@ class TestUpdateStackCommand(StubServerTestCase):
         sent = [r["type"] for r in self._stub.received[before:]]
         self.assertEqual(sent, ["UpdateStack"])
 
-    def test_links_reach_komodo_expanded(self):
+    def test_links_reach_komodo_expanded(self) -> None:
         before = len(self._stub.received)
         with unittest.mock.patch.dict(os.environ, self.env(KOMODO_VARS=VARS)):
             cli.main([
@@ -69,7 +69,7 @@ class TestUpdateStackCommand(StubServerTestCase):
         config = self._stub.received[before]["params"]["config"]
         self.assertEqual(config["links"], [f"http://{LAN_IP}:2283"])
 
-    def test_registry_login_reaches_komodo(self):
+    def test_registry_login_reaches_komodo(self) -> None:
         before = len(self._stub.received)
         with unittest.mock.patch.dict(os.environ, self.env()):
             cli.main([
@@ -82,13 +82,13 @@ class TestUpdateStackCommand(StubServerTestCase):
 
 
 class TestRunSyncCommand(StubServerTestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.dir = tempfile.TemporaryDirectory()
         self.toml = Path(self.dir.name) / "stacks.toml"
         self.toml.write_text('links = ["http://${HOMELAB_LAN_IP}:5000"]\n')
         self.addCleanup(self.dir.cleanup)
 
-    def test_pushes_rendered_contents_and_clears_the_repo_source(self):
+    def test_pushes_rendered_contents_and_clears_the_repo_source(self) -> None:
         before = len(self._stub.received)
         env = self.env(KOMODO_POLL_INTERVAL="0", KOMODO_VARS=VARS)
         with unittest.mock.patch.dict(os.environ, env):
@@ -101,7 +101,7 @@ class TestRunSyncCommand(StubServerTestCase):
         self.assertIn(LAN_IP, config["file_contents"])
         self.assertEqual(config["repo"], "")
 
-    def test_render_prints_the_expanded_file_and_contacts_nothing(self):
+    def test_render_prints_the_expanded_file_and_contacts_nothing(self) -> None:
         captured = io.StringIO()
         with unittest.mock.patch.dict(
                 os.environ, {"KOMODO_VARS": VARS}, clear=True):
