@@ -43,6 +43,18 @@ class _Handler(BaseHTTPRequestHandler):
         params = req.get("params", {})
         polls = self.server.polls
 
+        # Komodo sits behind Cloudflare, which rejects urllib's default agent
+        # with a plain-text 403 before the request ever arrives. Replayed here
+        # so the client cannot lose its User-Agent without a test noticing.
+        if self.headers.get("User-Agent", "").startswith("Python-urllib"):
+            body = b"error code: 1010"
+            self.send_response(403)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if not self.headers.get("X-Api-Key") or not self.headers.get("X-Api-Secret"):
             return self._send(401, {"error": "unauthorized"})
 

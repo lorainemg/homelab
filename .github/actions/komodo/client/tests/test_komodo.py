@@ -62,6 +62,24 @@ class TestCall(KomodoTestCase):
         with self.assertRaises(komodo.KomodoError):
             self.client.call("execute", "GetStack", {"stack": "immich"})
 
+    def test_sends_a_user_agent_cloudflare_does_not_ban(self):
+        # Komodo is behind Cloudflare, which answers urllib's default agent
+        # with a plain-text 403 (`error code: 1010`) instead of passing it on.
+        # The stub replays that, so losing the header fails here rather than
+        # in a live deploy, as it did on 2026-09-06.
+        self.assertFalse(komodo.USER_AGENT.startswith("Python-urllib"))
+        with unittest.mock.patch.object(komodo, "USER_AGENT", "Python-urllib/3.12"):
+            with self.assertRaises(komodo.KomodoError) as caught:
+                self.client.call("read", "GetStack", {"stack": "immich"})
+        self.assertIn("403", str(caught.exception))
+
+    def test_a_non_json_error_body_reaches_the_message(self):
+        # "response was not json" hid the one clue the 403 carried.
+        with unittest.mock.patch.object(komodo, "USER_AGENT", "Python-urllib/3.12"):
+            with self.assertRaises(komodo.KomodoError) as caught:
+                self.client.call("read", "GetStack", {"stack": "immich"})
+        self.assertIn("error code: 1010", str(caught.exception))
+
 
 class TestCallTimeout(unittest.TestCase):
     def test_a_stalled_request_times_out_promptly(self):
