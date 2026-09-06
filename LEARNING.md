@@ -396,6 +396,30 @@ start of a session; update when a concept lands or a new gap appears.
   meeting it: assert on the signal that separates the two outcomes you care
   about, not the one that is easiest to write. (2026-09-06)
 
+- **A success path that logs nothing is indistinguishable from a path that
+  never ran** — Komodo's registry login pushes a log line only inside its
+  `if let Err(...)`, so a working `docker login` leaves no trace in the update
+  at all. The bot's first failed deploy showed `--- Login to Registry ERROR`,
+  which made "look for the Login to Registry section" seem like the way to
+  confirm the fix; on the successful deploy that section is simply absent. The
+  real evidence is second-order: a *private* image was pulled, which is
+  impossible without the login. Worth pairing with the `docker-registry`
+  webhook lesson above — both are cases where the observable thing is missing
+  in two different situations, and only a check that can fail tells them apart.
+  (2026-09-06)
+
+- **Verify a credential on your own schedule, not the next user's** — the
+  `config` stack got its `registry_provider` / `registry_account` from the sync
+  **8 seconds after** its last deploy, so the login sat unexercised while
+  `config-agent` was already private. The next thing to test it would have been
+  an ordinary Caddyfile edit — on the one stack holding Caddy, which every other
+  hostname and Komodo's own UI are reached through. Triggering the deploy
+  deliberately turned "find out during the next unrelated change, on the
+  recovery path" into a check that could only cost a failed pull with the
+  containers left running. The general rule this repo keeps arriving at from
+  different directions: put the risky first-run somewhere you are watching.
+  (2026-09-06)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
