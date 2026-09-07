@@ -1,0 +1,48 @@
+# Grafana datasources, provisioned from this file rather than clicked into the
+# UI. Applied at every Grafana start.
+#
+# The uid of each datasource matches the one Grafana generated when these were
+# created by hand, so provisioning adopts the existing datasources instead of
+# creating duplicates. Dashboard JSON refers to datasources by uid, so these
+# values must not change.
+apiVersion: 1
+
+datasources:
+  - name: prometheus
+    uid: afieyjs5xea68a
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: loki
+    uid: cfif148vn85c0d
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # Turns a trace_id on a log line into a link through to Tempo. Only logs
+      # that arrive over OTLP carry trace_id; container logs scraped by
+      # promtail have no such field and get no link.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          url: '${__value.raw}'
+          urlDisplayLabel: View Trace
+          datasourceUid: ffif4qb78sy68c
+          targetBlank: true
+
+  - name: tempo
+    uid: ffif4qb78sy68c
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # The reverse link: from a span to that service's logs. customQuery means
+      # the query below is used verbatim, so this reaches OTLP logs (which
+      # carry service_name) and not promtail's container logs.
+      tracesToLogsV2:
+        datasourceUid: cfif148vn85c0d
+        customQuery: true
+        query: '{service_name="${__span.tags["service.name"]}"}'
