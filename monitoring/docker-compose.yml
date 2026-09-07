@@ -12,16 +12,18 @@ services:
       - "9090:9090"
     environment:
       - HA_TOKEN=${HA_TOKEN:-}
+      - LIBRECHAT_METRICS_SECRET=${LIBRECHAT_METRICS_SECRET:-}
     volumes:
       - ./prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
     tmpfs:
-      # The entrypoint writes the HA token here at startup. Deliberately
+      # The entrypoint writes the scrape tokens here at startup. Deliberately
       # OUTSIDE the read-only ./prometheus mount: docker cannot create a
       # mountpoint inside a read-only bind mount, and a placeholder directory
       # could not be committed anyway because .gitignore has **/secrets/.
-      # tmpfs also suits the data — the token is rewritten from HA_TOKEN on
-      # every start, so it never persists and never touches disk.
+      # tmpfs also suits the data — each token is rewritten from its
+      # environment variable on every start, so none of them persist or ever
+      # touch disk.
       - /run/prometheus:uid=65534,gid=65534,mode=0700
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'

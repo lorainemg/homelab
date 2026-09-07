@@ -60,6 +60,10 @@ services:
       CREDS_IV: ${CREDS_IV}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      # Unlocks /metrics, which LibreChat already serves but answers 401 on
+      # until this is set. Prometheus sends the same value as a bearer token,
+      # so the pair lives here and in monitoring/.env — rotating means both.
+      METRICS_SECRET: ${METRICS_SECRET}
       # Microsoft Foundry. librechat.yaml refers back to both of these by name
       # and every ${...} in that file is resolved against this environment, so
       # anything it references has to be passed here too. The full endpoint URL
