@@ -89,7 +89,7 @@
         "label": "Levels",
         "type": "custom",
         "multi": true,
-        "includeAll": false,
+        "includeAll": true,
         "hide": 0,
         "skipUrlSync": false,
         "description": "Which detected_level values count as broken.",
@@ -147,7 +147,8 @@
             "value": "unknown",
             "selected": false
           }
-        ]
+        ],
+        "allValue": ".*"
       },
       {
         "name": "search",
@@ -287,9 +288,9 @@
     },
     {
       "id": 3,
-      "title": "Errors in range",
+      "title": "Error totals (selected time range)",
       "type": "table",
-      "description": "Totals over the visible time range. Sort by count.",
+      "description": "One total per service across the whole time range selected in the picker, rather than per bucket. Sort by the errors column to see the worst offender.",
       "datasource": {
         "type": "loki",
         "uid": "cfif148vn85c0d"
