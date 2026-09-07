@@ -1,7 +1,7 @@
 {
   "uid": "homelab-whats-broken",
-  "title": "What's Broken",
-  "description": "Error-rate view across every container. Errors are counted from Loki's detected_level, not by matching text, so a service whose logs Loki cannot parse shows level 'unknown' and will not appear as broken here.",
+  "title": "Logs",
+  "description": "Log volume and error rates across every container. Errors are counted from Loki's detected_level rather than by matching text, so a service whose logs Loki cannot parse shows level 'unknown' and will not appear as failing here.",
   "tags": [
     "homelab",
     "logs"
@@ -64,7 +64,7 @@
           "uid": "cfif148vn85c0d"
         },
         "definition": "",
-        "description": "Service within the stack.",
+        "description": "Service within the stack. The selector carries a second, non-empty matcher because Loki rejects a query whose matchers can all match empty — which is what {stack=~\".*\"} is when Stack is All.",
         "hide": 0,
         "includeAll": true,
         "multi": true,
@@ -74,7 +74,7 @@
         "query": {
           "label": "service_name",
           "refId": "LokiVariableQueryEditor-VariableQuery",
-          "stream": "{stack=~\"$stack\"}",
+          "stream": "{stack=~\"$stack\", service_name=~\".+\"}",
           "type": 1
         },
         "refresh": 2,
@@ -89,7 +89,7 @@
         "label": "Levels",
         "type": "custom",
         "multi": true,
-        "includeAll": false,
+        "includeAll": true,
         "hide": 0,
         "skipUrlSync": false,
         "description": "Which detected_level values count as broken.",
@@ -147,7 +147,8 @@
             "value": "unknown",
             "selected": false
           }
-        ]
+        ],
+        "allValue": ".*"
       },
       {
         "name": "search",
@@ -287,9 +288,9 @@
     },
     {
       "id": 3,
-      "title": "Errors in range",
+      "title": "Error totals (selected time range)",
       "type": "table",
-      "description": "Totals over the visible time range. Sort by count.",
+      "description": "One total per service across the whole time range selected in the picker, rather than per bucket. Sort by the errors column to see the worst offender.",
       "datasource": {
         "type": "loki",
         "uid": "cfif148vn85c0d"
@@ -382,13 +383,18 @@
       ],
       "options": {
         "showTime": true,
-        "wrapLogMessage": true,
+        "wrapLogMessage": false,
         "sortOrder": "Descending",
         "enableLogDetails": true,
         "prettifyLogMessage": false,
         "showLabels": false,
         "showCommonLabels": false,
-        "dedupStrategy": "none"
+        "dedupStrategy": "none",
+        "syntaxHighlighting": true,
+        "showFieldSelector": true,
+        "enableInfiniteScrolling": true,
+        "showControls": true,
+        "controlsStorageKey": "homelab-logs"
       }
     }
   ]
