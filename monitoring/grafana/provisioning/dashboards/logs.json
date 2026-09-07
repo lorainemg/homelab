@@ -1,7 +1,7 @@
 {
   "uid": "homelab-whats-broken",
-  "title": "What's Broken",
-  "description": "Error-rate view across every container. Errors are counted from Loki's detected_level, not by matching text, so a service whose logs Loki cannot parse shows level 'unknown' and will not appear as broken here.",
+  "title": "Logs",
+  "description": "Log volume and error rates across every container. Errors are counted from Loki's detected_level rather than by matching text, so a service whose logs Loki cannot parse shows level 'unknown' and will not appear as failing here.",
   "tags": [
     "homelab",
     "logs"
