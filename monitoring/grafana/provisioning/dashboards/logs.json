@@ -383,13 +383,18 @@
       ],
       "options": {
         "showTime": true,
-        "wrapLogMessage": true,
+        "wrapLogMessage": false,
         "sortOrder": "Descending",
         "enableLogDetails": true,
         "prettifyLogMessage": false,
         "showLabels": false,
         "showCommonLabels": false,
-        "dedupStrategy": "none"
+        "dedupStrategy": "none",
+        "syntaxHighlighting": true,
+        "showFieldSelector": true,
+        "enableInfiniteScrolling": true,
+        "showControls": true,
+        "controlsStorageKey": "homelab-logs"
       }
     }
   ]
