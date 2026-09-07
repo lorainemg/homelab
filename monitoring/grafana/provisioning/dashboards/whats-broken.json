@@ -64,7 +64,7 @@
           "uid": "cfif148vn85c0d"
         },
         "definition": "",
-        "description": "Service within the stack.",
+        "description": "Service within the stack. The selector carries a second, non-empty matcher because Loki rejects a query whose matchers can all match empty — which is what {stack=~\".*\"} is when Stack is All.",
         "hide": 0,
         "includeAll": true,
         "multi": true,
@@ -74,7 +74,7 @@
         "query": {
           "label": "service_name",
           "refId": "LokiVariableQueryEditor-VariableQuery",
-          "stream": "{stack=~\"$stack\"}",
+          "stream": "{stack=~\"$stack\", service_name=~\".+\"}",
           "type": 1
         },
         "refresh": 2,
