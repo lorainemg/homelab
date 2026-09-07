@@ -56,3 +56,10 @@ scrape_configs:
   - job_name: 'caddy'
     static_configs:
       - targets: ['config-caddy:2020']
+
+  # The collector's own health: refused batches, dropped spans, queue depth.
+  # Needs the telemetry block in monitoring/otelcol/otel-collector.yml — the
+  # port is loopback-only without it.
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['otel_collector:8888']
