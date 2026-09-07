@@ -50,3 +50,9 @@ scrape_configs:
   - job_name: 'promtail'
     static_configs:
       - targets: ['promtail:9080']
+
+  # Not the admin API on 2019 — that can rewrite Caddy's running config, so it
+  # stays bound to localhost. 2020 is the metrics-only site in config/caddy/Caddyfile.
+  - job_name: 'caddy'
+    static_configs:
+      - targets: ['config-caddy:2020']

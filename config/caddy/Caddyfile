@@ -1,6 +1,14 @@
 # Served from Komodo's checkout, not baked into an image: edits here reach
 # Caddy through a git pull and --watch, with no build and no restart.
 
+{
+    # Per-request HTTP metrics are opt-in in Caddy. Without this the metrics
+    # endpoint serves only Go runtime and process stats — nothing about traffic.
+    servers {
+        metrics
+    }
+}
+
 http://immich.sussman.win {
     reverse_proxy immich-server:2283
 }
@@ -43,4 +51,13 @@ http://groupsplit.sussman.win {
     reverse_proxy group-split-web:8080 {
         header_up X-Forwarded-Proto https
     }
+}
+
+# Metrics only, on a port of its own. Caddy's admin API on localhost:2019 also
+# serves /metrics, but the same API can rewrite the running config, so it stays
+# on localhost where no other container can reach it. This site exposes the
+# read-only endpoint to `internal` for Prometheus and nothing else. Not
+# published to the host, so it is invisible from the LAN.
+:2020 {
+    metrics /metrics
 }
