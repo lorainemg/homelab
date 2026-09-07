@@ -40,8 +40,14 @@ datasources:
     url: http://tempo:3200
     jsonData:
       # The reverse link: from a span to that service's logs. customQuery means
-      # the query below is used verbatim, so this reaches OTLP logs (which
-      # carry service_name) and not promtail's container logs.
+      # the query below is used verbatim, so the tags mapping Grafana would
+      # otherwise apply is ignored — that is why there isn't one here.
+      #
+      # This reaches both kinds of log for the service, not just OTLP: promtail
+      # sets service_name from the compose service name, so a span for "bot"
+      # finds the bot's OTLP logs and its container stdout, provided the
+      # compose service name matches the OTLP service.name. Verified against
+      # live Loki rather than assumed.
       tracesToLogsV2:
         datasourceUid: cfif148vn85c0d
         customQuery: true
