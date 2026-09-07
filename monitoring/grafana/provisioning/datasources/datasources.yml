@@ -14,6 +14,13 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+    jsonData:
+      # Tempo's generated metrics carry a trace id on some samples (an
+      # exemplar). This turns those into a link from a point on a graph to one
+      # of the requests behind it — the metrics-to-traces direction.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: ffif4qb78sy68c
 
   - name: loki
     uid: cfif148vn85c0d

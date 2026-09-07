@@ -15,3 +15,29 @@ storage:
     backend: local
     local:
       path: /tmp/tempo/blocks
+
+# Turns traces into Prometheus metrics as they arrive: request rate, error rate
+# and latency per service (span-metrics), plus which service calls which
+# (service-graphs). Tempo pushes them to Prometheus, which is why Prometheus
+# needs --web.enable-remote-write-receiver in docker-compose.yml.
+#
+# The wal path sits under /tmp/tempo, which is the tempo_data volume, so the
+# generator's write-ahead log survives a restart like the trace blocks do.
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+  storage:
+    path: /tmp/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        # Attaches a trace id to the metric samples, so a spike on a latency
+        # graph can link straight to a trace that caused it.
+        send_exemplars: true
+
+# Processors are off by default and enabled per tenant. This is the 2.4 nested
+# overrides format, confirmed against the running binary's /status/config.
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [span-metrics, service-graphs]

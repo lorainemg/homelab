@@ -27,6 +27,12 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
+      # Prometheus normally only scrapes. Tempo's metrics generator pushes, so
+      # the receiving endpoint has to be switched on explicitly.
+      - '--web.enable-remote-write-receiver'
+      # Stores the trace ids Tempo attaches to those samples, which is what
+      # makes a point on a graph clickable through to its trace.
+      - '--enable-feature=exemplar-storage'
     networks:
       - internal
 
