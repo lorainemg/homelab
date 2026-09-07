@@ -60,6 +60,10 @@ services:
       CREDS_IV: ${CREDS_IV}
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      # Unlocks /metrics, which LibreChat already serves but answers 401 on
+      # until this is set. Prometheus sends the same value as a bearer token,
+      # so the pair lives here and in monitoring/.env — rotating means both.
+      METRICS_SECRET: ${METRICS_SECRET}
       # Microsoft Foundry. librechat.yaml refers back to both of these by name
       # and every ${...} in that file is resolved against this environment, so
       # anything it references has to be passed here too. The full endpoint URL
@@ -104,6 +108,13 @@ services:
     container_name: librechat-meilisearch
     restart: unless-stopped
     environment:
+      # Prometheus metrics deliberately left off. Meilisearch has a /metrics
+      # endpoint behind MEILI_EXPERIMENTAL_ENABLE_METRICS, but reading it needs
+      # a key with the metrics.get action, and the only key here is the master
+      # key — which can also delete every index. Handing that to the monitoring
+      # stack costs more than the counters are worth, since cAdvisor already
+      # reports this container's CPU and memory. If search-specific metrics
+      # ever matter, mint a scoped key with POST /keys instead of reusing this.
       MEILI_HOST: http://librechat-meilisearch:7700
       MEILI_NO_ANALYTICS: "true"
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
