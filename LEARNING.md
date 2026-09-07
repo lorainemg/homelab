@@ -420,6 +420,48 @@ start of a session; update when a concept lands or a new gap appears.
   different directions: put the risky first-run somewhere you are watching.
   (2026-09-06)
 
+- **Every container has its own loopback** — a process bound to `127.0.0.1`
+  inside a container is reachable from that container's own network namespace
+  and nowhere else, so "the endpoint answers" and "Prometheus can scrape it"
+  are different questions. Caddy's admin API and the OTel collector's
+  self-telemetry both returned 200 to `docker run --network container:<name>`
+  and refused the connection by name from `internal`. Probe from the vantage
+  point that will do the scraping. (2026-09-07)
+- **`401` vs `404` tells you a feature exists but is switched off** —
+  LibreChat's `/metrics` answered 401 while unknown routes answered 404, which
+  is what surfaced `METRICS_SECRET`. The tell only works when the app 404s
+  unknown routes: its RAG API 401s *everything* from a blanket auth
+  middleware, so a route that does not exist looked merely locked.
+  (2026-09-07)
+- **A duplicate key in a `.env` is silent and the last one wins** — no warning
+  from compose, no error. Verified with a two-line `.env` and
+  `docker compose config`. A hand-edited secret landing twice in one file and
+  never in its twin looked exactly like it had worked. (2026-09-07)
+- **Komodo's deploy trigger is a per-stack GitHub webhook, and one can simply
+  be missing** — `librechat` had none, so every change to its compose file
+  since 2026-08-26 reached the repo and stopped there while the stack still
+  reported `running` on August's container. A green stack is not evidence it
+  runs current code; `docker inspect -f '{{.State.StartedAt}}'` is.
+  (2026-09-07)
+- **`promtool check config` stats every `credentials_file`** — an absent token
+  file fails the check, so Prometheus would refuse to start if its entrypoint
+  had not already written the tokens. The `entrypoint:` wrapper in
+  `monitoring/docker-compose.yml` is a hard ordering requirement, not a
+  convenience. (2026-09-07)
+
+- **cAdvisor is the floor, an exporter is the ceiling, and the gap is often
+  not worth the containers** — cAdvisor already reports every container's CPU,
+  memory, network and disk I/O with no per-service setup. A database exporter
+  would add connection counts, cache hit ratios, Redis evictions and
+  replication state, but each is another container *plus* that database's
+  credentials duplicated into `monitoring/.env` — the same two-copy problem
+  LibreChat's token has, once per database. Decided 2026-09-07 to skip all
+  four (`immich_postgres`, `immich_redis`, `librechat-mongo`,
+  `librechat-vectordb`); `komodo-core`, `ollama` and LibreChat's RAG API
+  expose nothing at all and are not fixable from this side anyway. Revisit if
+  an incident ever reads as "the container looks fine but the service is
+  slow" — that is precisely the gap an exporter fills. (2026-09-07)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
@@ -463,6 +505,13 @@ start of a session; update when a concept lands or a new gap appears.
   undo. `ssh home 'docker volume rm docker-registry_registry-data'`.
 - `group-split`'s `ignore_services` lives only in Komodo's Mongo. Decide
   whether to move it into that repo's `deploy.yml` payload so a rebuild keeps it.
+
+- group-split's telemetry still terminates in its own Aspire dashboard
+  (`OTEL_EXPORTER_OTLP_ENDPOINT=http://compose-dashboard:18889`) instead of the
+  shared collector, so its traces never reach Tempo and die with the container.
+  It deploys from its own repo, so the change belongs there.
+- Delete the `docker-registry` deploy webhook on the GitHub repo — it points at
+  a Stack Komodo no longer has.
 
 ## Open questions
 
