@@ -1,0 +1,21 @@
+# Tells Grafana where to find dashboard JSON. This file is not a dashboard:
+# the dashboards are the .json files sitting beside it, and Grafana rescans
+# this directory every updateIntervalSeconds, so a committed change appears
+# without restarting the container.
+apiVersion: 1
+
+providers:
+  - name: homelab
+    orgId: 1
+    # Provisioned dashboards land here rather than General, so "is this
+    # dashboard in git?" is answerable at a glance.
+    folder: Homelab
+    type: file
+    disableDeletion: false
+    # Save stays greyed out in the UI: the repo is the only way to change a
+    # dashboard, so the file and Grafana's database cannot drift apart.
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

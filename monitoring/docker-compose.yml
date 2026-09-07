@@ -52,6 +52,10 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
     volumes:
       - grafana_data:/var/lib/grafana
+      # Datasources and dashboards as files from the checkout, so they live in
+      # git rather than only in grafana_data. Directory, not file — see the
+      # bind-mount note in LEARNING.md.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     networks:
       - internal
 
