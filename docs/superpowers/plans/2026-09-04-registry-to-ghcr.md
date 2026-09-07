@@ -485,7 +485,9 @@ git log -1 --date=short --format='%ad %s' origin/main
   Note the owner is `sussman-club`, not `lorainemg` — this repo belongs to the org,
   so its automatic token can write only that namespace.
 
-- [ ] **Step 6a: Make the org create packages private, before the first push**
+- [x] **Step 6a: Make the org create packages private, before the first push** —
+  done; all three packages came out private (401 anonymously) with no
+  per-package flip, unlike the bot's.
 
   Unlike a personal account, an org has two switches that apply to every new
   package. Sussman-Club → Settings → Packages:
@@ -514,7 +516,7 @@ git log -1 --date=short --format='%ad %s' origin/main
   The account is still `lorainemg` — the credential is the *puller's*, and the one
   PAT reads both namespaces.
 
-- [ ] **Step 7: Commit and deploy** — committed on `ghcr-registry` from a
+- [x] **Step 7: Commit and deploy** — merged as #163 2026-09-06. Committed on `ghcr-registry` from a
   worktree off `origin/main` (the clone's 400-odd modified files are
   line-ending noise, empty under `--ignore-cr-at-eol`), PR opened against
   `main` 2026-09-06 with a note to retarget to `dev` if preferred. Held until
@@ -527,7 +529,8 @@ git commit -m "push group-split images to ghcr instead of the home registry"
 git push
 ```
 
-- [ ] **Step 8: Watch the run and confirm the pull**
+- [x] **Step 8: Watch the run and confirm the pull** — green; containers run
+  `ghcr.io/sussman-club/group-split/{api,web,migrations-internal}`.
 
 ```bash
 gh run watch --repo Sussman-Club/group-split
@@ -536,7 +539,9 @@ ssh home 'docker ps --format "{{.Names}}\t{{.Image}}" | grep -i group'
 
   Expected: images beginning `ghcr.io/sussman-club/group-split/`.
 
-- [ ] **Step 9: Lock down the org packages**
+- [x] **Step 9: Lock down the org packages** — the org switches did it at
+  creation. The `lorainemg` PAT reads the org namespace without a per-package
+  grant, as the deploy's own pull proves.
 
   Repeat Task 3's Steps 1-5 against
   `https://github.com/orgs/Sussman-Club/packages`.
@@ -547,10 +552,15 @@ ssh home 'docker ps --format "{{.Names}}\t{{.Image}}" | grep -i group'
   If it fails, add `lorainemg` to that package's access list explicitly — do not
   widen the token's scopes.
 
-- [ ] **Step 10: Delete the dead secrets**
+- [ ] **Step 10: Delete the dead secrets** — *left for you:* `gh secret delete`
+  is refused by the session's classifier.
 
-  In the repo's settings, remove the now-unused `REGISTRY_USERNAME` and
-  `REGISTRY_PASSWORD` secrets.
+```bash
+gh secret delete REGISTRY_USERNAME --repo Sussman-Club/group-split --env production
+gh secret delete REGISTRY_PASSWORD --repo Sussman-Club/group-split --env production
+```
+
+  Nothing reads them since #163; they are dead weight, not a live credential.
 
 ---
 
@@ -626,20 +636,30 @@ git commit -m "stop publishing the home registry now that images live in ghcr"
 git push
 ```
 
-- [ ] **Step 6: Verify the route is gone**
+- [x] **Step 6: Verify the route is gone** — done 2026-09-06, and **the check as
+  written was wrong.**
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://registry.sussman.win/v2/_catalog
+curl -sS -D - -o /dev/null https://registry.sussman.win/v2/_catalog
 ```
 
-  Expected: not 200. A 200 with a JSON catalogue means the `config` stack has not
-  redeployed yet — check Komodo before assuming failure.
+  It still answers **200**, with `content-length: 0` and no catalogue. That is
+  Caddy's reply for a `Host` it has no site block for, not evidence the route
+  survived. The status code alone cannot tell "removed" from "still proxying";
+  the body can. Before: `["alpine","app","traktv-tg-bot/bot"]`. After: empty.
+  Confirmed underneath by `docker exec config-caddy grep -c registry.sussman.win
+  /etc/caddy/Caddyfile` → 0, and Caddy's log line `config file changed;
+  reloading`.
 
 ---
 
 ### Task 6: Remove the last traces
 
-- [ ] **Step 1: Delete the Stack in Komodo**
+- [x] **Step 1: Delete the Stack in Komodo** — done 2026-09-06 via
+  `DeleteStack`. Safe for the volume: Komodo's `pre_delete`
+  (`resource/stack.rs`, v2.3.1) runs `docker compose down --remove-orphans`,
+  with no `-v`. Verified after: no `registry` container, and
+  `docker-registry_registry-data` still present at 1.5G.
 
   Komodo UI → Stacks → `docker-registry` → delete. Confirm the `registry`
   container is gone:
@@ -650,7 +670,13 @@ ssh home 'docker ps -a --filter name=registry --format "{{.Names}}"'
 
   Expected: no output.
 
-- [ ] **Step 2: Delete the DNS record and tunnel hostname**
+- [x] **Step 2: Delete the DNS record and tunnel hostname** — done 2026-09-06
+  through the Cloudflare API. The zone is in "Sussman Account"; tunnel
+  `Sussman` (`323e3728…`). Ingress went 8 rules to 7 (version 46 → 47), the
+  `registry.sussman.win` CNAME was deleted, and all six remaining hostnames
+  were re-checked serving afterwards. The hostname now answers **404**: it
+  still resolves on the `*.sussman.win` wildcard and lands on the tunnel's
+  trailing `http_status:404`.
 
   In Cloudflare, remove the `registry` hostname from the tunnel's public hostname
   list, and its DNS record if one exists separately. Note from prior work: the
@@ -673,14 +699,8 @@ ssh home 'docker ps -a --filter name=registry --format "{{.Names}}"'
   The `alpine` and `app` images in the old catalogue are not migrated; they die
   with this volume.
 
-- [ ] **Step 4: Commit**
-
-```bash
-cd /mnt/Data/work/homelab
-git add LEARNING.md
-git commit -m "note when to delete the old registry volume"
-git push
-```
+- [x] **Step 4: Commit** — folded into the plan's single PR (#12); the volume
+  note is in LEARNING.md's Next list, dated 2026-10-06.
 
 ### Task 7: Make `config-agent` private too
 
@@ -695,15 +715,26 @@ fields go there and reach the live Stack through the sync.
   / `registry_account` under `[stack.config]` in `komodo/stacks.toml`, in the
   plan's PR. The sync only rewrites Stack config (no `deploy` flags in the
   file), so applying it restarts nothing.
-- [ ] **Step 2: Merge the PR, let `sync-komodo` run**, then read the fields
-  back: `GetStack config` must show `ghcr.io` / `lorainemg`.
-- [ ] **Step 3: Flip the package to Private** — package page → Package settings
-  → Danger Zone. Anonymous tag list must then get 401.
-- [ ] **Step 4: Prove a deploy still pulls** — the next push touching
-  `config/config-agent/**` builds and deploys through the login; or trigger a
-  deploy of `config` from Komodo and check the update's "Login to Registry"
-  section. Remember `config` holds Caddy: a red CI run for that stack is not
-  evidence, check the containers.
+- [x] **Step 2: Merge the PR, let `sync-komodo` run**, then read the fields
+  back: `GetStack config` shows `ghcr.io` / `lorainemg`.
+- [x] **Step 3: Flip the package to Private** — done; the anonymous tag list
+  gets 401.
+- [x] **Step 4: Prove a deploy still pulls** — done 2026-09-06 by triggering
+  `DeployStack config` deliberately, rather than waiting for the next Caddyfile
+  edit. Worth doing on purpose: the sync wrote the two fields **8 seconds after**
+  the last deploy, so nothing had exercised the login, and the first thing to
+  exercise it would have been an ordinary config change — on the stack holding
+  Caddy, the path everything else is reached through.
+
+  Result: `Compose Pull` pulled
+  `ghcr.io/lorainemg/homelab/config-agent:latest` and the deploy completed;
+  Caddy and config-agent kept their uptimes and the sites still serve.
+
+  **There is no "Login to Registry" line in a successful update.**
+  `maybe_login_registry` (`bin/periphery/src/stack/mod.rs`, v2.3.1) pushes a log
+  only inside `if let Err(e) = docker_login(...)`. So that section appearing is
+  itself the failure signal — as in Task 2's first run. Success is proved by the
+  private image pulling at all.
 
 ## Final verification
 
@@ -711,7 +742,8 @@ Run all four. The migration is done when every one passes:
 
 ```bash
 # 1. The old registry is unreachable from the internet.
-curl -s -o /dev/null -w '%{http_code}\n' https://registry.sussman.win/v2/_catalog   # not 200
+# Read the BODY, not the status: an unmatched Host gets an empty 200 from Caddy.
+curl -s https://registry.sussman.win/v2/_catalog                                    # empty, no catalogue
 
 # 2. A stranger cannot pull either app's images.
 docker logout ghcr.io
