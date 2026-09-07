@@ -14,6 +14,13 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+    jsonData:
+      # Tempo's generated metrics carry a trace id on some samples (an
+      # exemplar). This turns those into a link from a point on a graph to one
+      # of the requests behind it — the metrics-to-traces direction.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: ffif4qb78sy68c
 
   - name: loki
     uid: cfif148vn85c0d
@@ -40,8 +47,14 @@ datasources:
     url: http://tempo:3200
     jsonData:
       # The reverse link: from a span to that service's logs. customQuery means
-      # the query below is used verbatim, so this reaches OTLP logs (which
-      # carry service_name) and not promtail's container logs.
+      # the query below is used verbatim, so the tags mapping Grafana would
+      # otherwise apply is ignored — that is why there isn't one here.
+      #
+      # This reaches both kinds of log for the service, not just OTLP: promtail
+      # sets service_name from the compose service name, so a span for "bot"
+      # finds the bot's OTLP logs and its container stdout, provided the
+      # compose service name matches the OTLP service.name. Verified against
+      # live Loki rather than assumed.
       tracesToLogsV2:
         datasourceUid: cfif148vn85c0d
         customQuery: true

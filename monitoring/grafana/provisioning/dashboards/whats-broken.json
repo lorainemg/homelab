@@ -1,0 +1,395 @@
+{
+  "uid": "homelab-whats-broken",
+  "title": "What's Broken",
+  "description": "Error-rate view across every container. Errors are counted from Loki's detected_level, not by matching text, so a service whose logs Loki cannot parse shows level 'unknown' and will not appear as broken here.",
+  "tags": [
+    "homelab",
+    "logs"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 42,
+  "editable": false,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "cfif148vn85c0d"
+        },
+        "definition": "",
+        "description": "Compose project. allValue is .* not .+ so logs without a stack label (OTLP) are still included.",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "stack",
+        "label": "Stack",
+        "options": [],
+        "query": {
+          "label": "stack",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "",
+          "type": 1
+        },
+        "refresh": 2,
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".+",
+        "allowCustomValue": true,
+        "current": {
+          "text": "All",
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "cfif148vn85c0d"
+        },
+        "definition": "",
+        "description": "Service within the stack.",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "service",
+        "label": "Service",
+        "options": [],
+        "query": {
+          "label": "service_name",
+          "refId": "LokiVariableQueryEditor-VariableQuery",
+          "stream": "{stack=~\"$stack\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "regex": "",
+        "regexApplyTo": "value",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "name": "level",
+        "label": "Levels",
+        "type": "custom",
+        "multi": true,
+        "includeAll": false,
+        "hide": 0,
+        "skipUrlSync": false,
+        "description": "Which detected_level values count as broken.",
+        "query": "error,fatal,critical,warn,info,debug,trace,unknown",
+        "current": {
+          "text": [
+            "error",
+            "fatal",
+            "critical"
+          ],
+          "value": [
+            "error",
+            "fatal",
+            "critical"
+          ]
+        },
+        "options": [
+          {
+            "text": "error",
+            "value": "error",
+            "selected": true
+          },
+          {
+            "text": "fatal",
+            "value": "fatal",
+            "selected": true
+          },
+          {
+            "text": "critical",
+            "value": "critical",
+            "selected": true
+          },
+          {
+            "text": "warn",
+            "value": "warn",
+            "selected": false
+          },
+          {
+            "text": "info",
+            "value": "info",
+            "selected": false
+          },
+          {
+            "text": "debug",
+            "value": "debug",
+            "selected": false
+          },
+          {
+            "text": "trace",
+            "value": "trace",
+            "selected": false
+          },
+          {
+            "text": "unknown",
+            "value": "unknown",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "search",
+        "label": "Search",
+        "type": "textbox",
+        "description": "Free-text filter applied to every panel. Empty matches all.",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "query": "",
+        "hide": 0,
+        "skipUrlSync": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Log volume by level",
+      "type": "timeseries",
+      "description": "Every line, split by severity. Ignores the Levels picker on purpose, so you can see how errors compare to the rest.",
+      "datasource": {
+        "type": "loki",
+        "uid": "cfif148vn85c0d"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "cfif148vn85c0d"
+          },
+          "expr": "sum by (detected_level) (count_over_time({stack=~\"$stack\", service_name=~\"$service\"} |~ \"$search\" [$__interval]))",
+          "queryType": "range",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Errors by service",
+      "type": "timeseries",
+      "description": "Lines matching the Levels picker, per service.",
+      "datasource": {
+        "type": "loki",
+        "uid": "cfif148vn85c0d"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "cfif148vn85c0d"
+          },
+          "expr": "sum by (service_name) (count_over_time({stack=~\"$stack\", service_name=~\"$service\"} |~ \"$search\" | detected_level=~\"$level\" [$__interval]))",
+          "queryType": "range",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Errors in range",
+      "type": "table",
+      "description": "Totals over the visible time range. Sort by count.",
+      "datasource": {
+        "type": "loki",
+        "uid": "cfif148vn85c0d"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "cfif148vn85c0d"
+          },
+          "expr": "sum by (stack, service_name) (count_over_time({stack=~\"$stack\", service_name=~\"$service\"} |~ \"$search\" | detected_level=~\"$level\" [$__range]))",
+          "queryType": "instant",
+          "editorMode": "code",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "errors"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "errors",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 4,
+      "title": "Matching log lines",
+      "type": "logs",
+      "description": "The lines behind the graphs above.",
+      "datasource": {
+        "type": "loki",
+        "uid": "cfif148vn85c0d"
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "cfif148vn85c0d"
+          },
+          "expr": "{stack=~\"$stack\", service_name=~\"$service\"} |~ \"$search\" | detected_level=~\"$level\"",
+          "queryType": "range",
+          "editorMode": "code",
+          "instant": false,
+          "range": true
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "dedupStrategy": "none"
+      }
+    }
+  ]
+}

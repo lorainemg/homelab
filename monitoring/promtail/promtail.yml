@@ -19,5 +19,19 @@ scrape_configs:
         target_label: container_name
       - source_labels: [__meta_docker_container_log_stream]
         target_label: stream
+      # Compose stamps every container it starts with the stack it belongs to
+      # and its role within that stack. Promtail is handed both and discarded
+      # them; keeping them gives three levels to filter on — stack, then
+      # service_name, then container_name for one specific instance.
+      #
+      # service_name also overrides the one Loki invents when a log arrives
+      # without it (Loki derives it from container_name). For the trakt bot
+      # that is an improvement: its compose service is "bot", which matches the
+      # service.name its traces carry, so spans and container logs finally
+      # agree on one value.
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        target_label: stack
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service_name
     pipeline_stages:
       - docker: {}
