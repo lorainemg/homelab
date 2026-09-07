@@ -30,3 +30,23 @@ scrape_configs:
   - job_name: 'cadvisor'
     static_configs:
       - targets: ['cadvisor:8080']
+
+  # The monitoring stack watching itself. Each of these ships a Prometheus
+  # endpoint on 0.0.0.0 already, so they need no change on their side — only
+  # a job here. Caddy and otel-collector are missing on purpose: both bind
+  # their metrics port to localhost, so they need a config change first.
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+
+  - job_name: 'tempo'
+    static_configs:
+      - targets: ['tempo:3200']
+
+  - job_name: 'promtail'
+    static_configs:
+      - targets: ['promtail:9080']
