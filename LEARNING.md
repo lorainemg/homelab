@@ -591,6 +591,14 @@ start of a session; update when a concept lands or a new gap appears.
   never kills a running job. An image that never leaves the server needs no
   registry and no CI. (2026-10-22)
 
+- **A version tag is not a version** — Docker re-publishes official image
+  tags when it rebuilds them (Docker Hub shows `docker:29.9.2-dind` last
+  pushed 2026-10-22, two days after 29.9.2 was released), and Komodo pulls on
+  every deploy. So with a tag alone, an unrelated push can recreate a
+  container, and for `ci-runner` that kills a running job. A `@sha256:` digest
+  is the only reference that cannot move; updating it becomes a commit, made
+  when a restart is expected. (2026-10-22)
+
 ## Shaky
 
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately

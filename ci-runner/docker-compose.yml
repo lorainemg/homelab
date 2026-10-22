@@ -20,8 +20,14 @@ name: ci-runner
 
 services:
   dind:
-    # Same Docker version as the CLI in the runner image.
-    image: docker:29.9.2-dind
+    # Same Docker version as the CLI in the runner image, pinned by digest.
+    # Docker re-publishes a version tag whenever it rebuilds the image (for a
+    # base-image security fix, say), and Komodo pulls on every deploy. With
+    # the tag alone, the next unrelated push after a re-publish would recreate
+    # dind — and the runner with it, since it shares dind's network — killing
+    # whatever job was running. To update, bump the tag and digest together:
+    #   docker buildx imagetools inspect docker:<version>-dind
+    image: docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977
     container_name: ci-runner-dind
     restart: unless-stopped
     privileged: true
