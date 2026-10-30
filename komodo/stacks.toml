@@ -152,3 +152,20 @@ file_paths = ["ci-runner/docker-compose.yml"]
 # leaves the containers alone, so a job in progress survives unrelated pushes.
 run_build = true
 webhook_force_deploy = true
+
+##
+
+[[stack]]
+name = "t3-code"
+[stack.config]
+server = "Local"
+project_name = "t3-code"
+repo = "lorainemg/homelab"
+file_paths = ["t3-code/docker-compose.yml"]
+# Image changes keep Compose identical; the CI trigger must still pull/recreate.
+webhook_force_deploy = true
+registry_provider = "ghcr.io"
+registry_account = "lorainemg"
+links = ["https://t3.sussman.win"]
+# CI builds both images before the shared deploy action. No direct GitHub
+# Stack webhook: it would race the builds. No checkout-mounted runtime config.

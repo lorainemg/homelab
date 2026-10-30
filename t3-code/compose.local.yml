@@ -1,0 +1,14 @@
+# Local verification of the production services; not referenced by Komodo.
+services:
+  t3-code:
+    image: homelab-t3-code:local
+    build: ./server
+    ports:
+      - "127.0.0.1:3774:3773"
+  catalog:
+    image: homelab-t3-code-catalog:local
+    build: ./catalog
+networks:
+  internal:
+    external: false
+    name: t3-code_local-edge

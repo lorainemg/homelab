@@ -69,3 +69,7 @@ http://tv.sussman.win {
 :2020 {
     metrics /metrics
 }
+
+http://t3.sussman.win {
+    reverse_proxy t3-code:3773
+}

@@ -1,0 +1,27 @@
+name: Validate T3 Code
+on:
+  pull_request:
+    paths:
+      - 't3-code/**'
+      - 'config/caddy/Caddyfile'
+      - 'komodo/stacks.toml'
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/validate-t3-code.yml'
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check catalog translation and Compose
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s t3-code/catalog
+          docker compose --env-file t3-code/.env.example -f t3-code/docker-compose.yml config --quiet
+          python3 -c 'import tomllib; tomllib.load(open("komodo/stacks.toml", "rb"))'
+      - name: Validate Caddyfile
+        run: docker run --rm -v "$PWD/config/caddy:/etc/caddy:ro" caddy:2.8.4 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Build server and catalog
+        run: |
+          docker build -t t3-code-validation t3-code/server
+          docker build -t t3-code-catalog-validation t3-code/catalog

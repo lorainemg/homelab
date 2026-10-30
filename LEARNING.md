@@ -609,6 +609,21 @@ start of a session; update when a concept lands or a new gap appears.
 
 ## Shaky
 
+- T3 Code Docker evaluation (2026-10-30): stable v0.1.5 provides a standalone
+  Linux runtime. The production-ready PR uses direct pairing through existing
+  Caddy/Cloudflare; T3 Connect is optional. Codex 0.166.0 ran Foundry tasks and
+  wrote workspace data through T3. Identity, signing key and workspace survived
+  recreation. Caddy passed an authenticated WebSocket upgrade. Public hostname,
+  phone reconnect and browser sandbox acceptance still need the live rollout.
+- Model discovery: Azure's inference `/models` returns `data`; Codex expects a
+  native `models` catalog. The Foundry project deployment-list API accepted the
+  existing key, correcting the earlier assumption that management login was
+  necessary. The private adapter translates requests without polling or cache.
+  The catalog image extracts Codex's bundled metadata during its build, so no
+  model-template file is maintained. Models absent from that bundled catalog
+  and picker updates after actual Azure deployment changes remain gaps. The token is mounted as a runtime file so it does not
+  expand into Komodo's Compose config log. No production deployment was performed.
+
 - Komodo's Resource Sync (stacks declared as TOML in the repo) — deliberately
   untouched so far; it is the obvious next capability after this migration.
 - LibreChat's production acceptance — deployed and in use, and the Code

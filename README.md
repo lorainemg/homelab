@@ -1,15 +1,15 @@
 # 🏠 Homelab
 
-Infrastructure-as-code for my single-node homelab: ~30 containers across six
-Docker Compose stacks (plus a self-deploying app stack), published to the
+Infrastructure-as-code for my single-node homelab: Docker Compose stacks
+(plus a self-deploying app stack), published to the
 internet through a Cloudflare Tunnel and fully observable with a
 Grafana/Prometheus/Loki/Tempo stack.
 
 Everything needed to rebuild the server from scratch lives in this repo.
 Pushing to `main` deploys — but CI is no longer the deployer. Komodo checks
 this repo out *on the server* and runs `docker compose` there, triggered by a
-GitHub webhook. GitHub Actions builds only the one image that still needs
-building (`config-agent`) and then tells Komodo to deploy, in that order, so an
+GitHub webhook. GitHub Actions builds the owned images
+(`config-agent`, `t3-code`, and `t3-code-catalog`) and then tells Komodo to deploy, in that order, so an
 image is never pulled before it exists; a second job renders the Stack
 definitions in `komodo/stacks.toml` and pushes them into Komodo's sync. Only the data stays on the machine, and
 each stack's secrets live in a `.env` beside its checkout rather than in GitHub.
@@ -37,6 +37,7 @@ flowchart LR
         GRAFANA[Grafana]
         KOMODO[Komodo]
         LIBRECHAT[LibreChat]
+        T3[T3 Code]
         GROUPSPLIT[GroupSplit]
         TV[tv]
     end
@@ -46,6 +47,7 @@ flowchart LR
     CADDY --> GRAFANA
     CADDY --> KOMODO
     CADDY --> LIBRECHAT
+    CADDY --> T3
     CADDY --> GROUPSPLIT
     CADDY --> TV
 
@@ -98,12 +100,13 @@ deploy — CI's or Komodo's — can take down the route used to repair it.
 
 | Stack | What it runs | Why |
 |---|---|---|
-| [config/](config/) | Caddy 2.8 + config-agent | Reverse proxy for every published service, plus the one container that copies repo config (HA yaml, mosquitto.conf) into the live dirs and pushes UI edits back to git. Deployed by Komodo; the only stack CI still touches, because `config-agent` is a built image |
+| [config/](config/) | Caddy 2.8 + config-agent | Reverse proxy for every published service, plus the one container that copies repo config (HA yaml, mosquitto.conf) into the live dirs and pushes UI edits back to git. Deployed by Komodo; CI builds `config-agent` before the shared Komodo deploy action |
 | [immich/](immich/) | Immich v3, Postgres (pgvector), Valkey, ML service | Self-hosted Google Photos replacement with on-device ML. Deployed by Komodo from this repo on a GitHub webhook, not by CI |
 | [home-assistant/](home-assistant/) | Home Assistant, Mosquitto, Whisper, Piper, Ollama | Smart home with a fully local voice assistant pipeline (STT → LLM → TTS). Deployed by Komodo from this repo on a GitHub webhook, not by CI; `ha-config/` and `mosquitto/` are synced separately by config-agent |
 | [monitoring/](monitoring/) | Prometheus, Grafana, Loki, Tempo, OTel Collector, Promtail, cAdvisor, node-exporter | Metrics, logs, and traces for the host and every container. Deployed by Komodo from this repo on a GitHub webhook, not by CI; each service's config is bind-mounted from the checkout rather than baked into an image |
 | [tunnel/](tunnel/) | cloudflared | The Cloudflare Tunnel every published service is reached through. Host-managed, never deployed — a bad deploy of the stack holding the tunnel would remove the path used to repair it |
 | [komodo/](komodo/) | Komodo Core + Periphery + MongoDB | The control plane: clones this repo on the server and deploys every stack above from it. Host-managed, never CI-deployed |
+| [t3-code/](t3-code/) | T3 Code v0.1.5, Codex 0.166.0, Foundry catalog proxy | CI builds both images before Komodo deploys; direct pairing through Caddy/Cloudflare at t3.sussman.win; awaiting authorized rollout |
 | [librechat/](librechat/) | LibreChat, MongoDB, Meilisearch | Chat front-end over a Microsoft Foundry deployment. A Komodo-owned stack with checkout-mounted config; secret delivery remains under evaluation |
 | [code-interpreter/](code-interpreter/) | LibreChat Code Interpreter v1.10.3 (API, worker, KVM sandbox runner, egress gateway, file and tool-call servers), Redis, Floci S3 | The sandbox behind LibreChat's "Run code" and "Upload to Code Environment": each execution runs in its own libkrun microVM with no network. Only LibreChat can reach it, over `librechat-codeapi`. Deployed by Komodo from this repo on a GitHub webhook |
 | [ci-runner/](ci-runner/) | GitHub Actions runner 2.338 (official image + Compose), Docker-in-Docker 29.9 | A self-hosted runner for a private repo, so its Actions jobs run here instead of on GitHub's machines. Jobs get a private Docker daemon, never the server's. Deployed by Komodo from this repo, which also builds the runner image on the server — see [The self-hosted runner](#the-self-hosted-runner-ci-runner) |
@@ -184,6 +187,7 @@ Highlights:
 ├── registry/         docker-compose.yml (retired 2026-09; kept until the old volume is deleted)
 ├── tunnel/           docker-compose.yml (cloudflared), .env.example
 ├── komodo/           docker-compose.yml (Core + Periphery + Mongo), registries.config.toml, .env.example
+├── t3-code/          docker-compose.yml, .env.example, server/, catalog/, pair.py
 ├── librechat/        docker-compose.yml, config/librechat.yaml, .env.example (deployed by Komodo)
 ├── code-interpreter/ docker-compose.yml, .env.example (LibreChat's code sandbox, deployed by Komodo)
 ├── ci-runner/        docker-compose.yml, runner/ (Dockerfile, entrypoint, job hook), .env.example (Actions runner, built and deployed by Komodo)
@@ -338,8 +342,8 @@ lives in the workflow, so editing it must re-run the sync), or on
 `workflow_dispatch`. Chosen on 2026-09-03 over committing a rendered copy back
 to the repo, to keep a single `stacks.toml` in git.
 
-Both jobs hold the same Komodo API key: the `homelab-ci` service user has Write
-on the `homelab` sync and Execute on the `config` stack, nothing else. The sync
+The deployment and sync jobs hold the same Komodo API key: the `homelab-ci` service user has Write
+on the `homelab` sync and Execute on the `config` and `t3-code` stacks. The sync
 defines every Stack, `post_deploy` commands included, so treat that key as the
 most valuable secret in this repo. CI no longer holds `KOMODO_WEBHOOK_SECRET` —
 the per-stack GitHub webhooks Komodo listens on still use it, but nothing in a
@@ -403,3 +407,142 @@ on it could not repair it.
   the runner 2 CPUs and 2 GB.
 - **No fallback.** While the server is down, a job aimed at this runner waits,
   for up to 24 hours, then fails. It does not fall back to GitHub's runners.
+
+The `build-t3-code` job follows the same shared deployment convention. It depends
+on `sync-komodo`, detects `t3-code/server/**` and `t3-code/catalog/**`, publishes
+both images with latest/SHA tags, then runs `deploy-stack`. Compose-only changes
+run the deployment step without rebuilding. This ordering prevents a deployment
+from pulling an image before it exists or targeting a Stack not yet synced.
+
+## T3 Code remote development
+
+The stack runs standalone T3 v0.1.5 and Codex 0.166.0 as UID/GID 1000. Caddy
+routes `t3.sussman.win` to `t3-code:3773` on the shared `internal` network;
+Cloudflare Tunnel terminates public HTTPS and forwards to Caddy, as for the
+other apps. There is no published host port or Docker socket. Clients pair
+with the HTTPS address and a one-time code; a T3 Connect account is optional
+and is not required for this route. Docker restart policy replaces host service
+installation.
+
+Codex uses the Foundry Responses endpoint for inference. Its separate
+`model_catalog_url` points to the private `catalog` container, which translates
+Foundry project `/deployments?api-version=v1` into Codex's native metadata.
+Each authenticated catalog request fetches current deployments. There is no
+adapter polling, cooldown, cache, or manual-refresh endpoint; Codex owns its
+client cache and request timing. Catalog has its own bridge and no Caddy route.
+
+Deployment names come from Foundry. The catalog image extracts native metadata
+from the same pinned Codex release during its build (`codex debug models
+--bundled`); no model template is maintained in this repository. The proxy
+filters on Foundry's chat-completion capability and matches its `modelName`
+to that bundled metadata, preserves the deployment
+name as the model ID, and labels it `foundry-<deployment>`. Luna and Sol work
+this way. Models absent from Codex's bundled catalog are omitted rather than
+assigned guessed capabilities; this includes the resource's older GPT-5.2,
+embedding and Decision deployments. T3 v0.1.5 capitalizes labels in its picker.
+
+Persistent paths under `${DATA_ROOT:-/data}/t3-code`:
+
+- `home/` → `/home/t3`: T3 identity, paired sessions, SQLite history, Codex state
+  and downloaded tools. T3 uses `.t3`; Codex uses `.codex`.
+- `workspace/` → `/workspace`: repositories and working files, independent of
+  Komodo's disposable checkout.
+- `secrets/` → read-only `/run/credentials` in both containers: `foundry-token`.
+  The token is read at runtime, never interpolated into Compose or committed.
+  T3 passes it to its Codex child processes; administrators of the host can
+  still access it. Restart both services after rotating the file.
+
+### First rollout — requires authorization
+
+Opening the PR or running local checks does not deploy. Merging to `main`
+changes the live Caddy config, applies ResourceSync, and builds/deploys T3, so
+prepare its host state and authorize the rollout before merging.
+
+1. Prepare `/data/t3-code/home`, `workspace`, and `secrets` on the server with
+   owner 1000:1000. Restrict `home` and `secrets` to 700. Write the Foundry token
+   privately into `secrets/foundry-token`, owner 1000:1000 and mode 400. Do not
+   pass its value on a shell command line or paste it into Komodo's UI.
+2. Pre-clone the Stack checkout if needed, and place the non-secret settings
+   from `t3-code/.env.example` in
+   `/etc/komodo/stacks/t3-code/t3-code/.env`, root-owned mode 600. The project
+   URL and inference URL are separate required settings. Choose the default
+   deployment with `CODEX_MODEL`.
+3. Before the authorized merge, create an undeployed Komodo Stack shell named
+   `t3-code`, server `Local`, project name `t3-code`, and grant `homelab-ci`
+   Execute on that Stack. After the merge, ResourceSync fills its configuration.
+   CI waits for ResourceSync, builds both images, then uses the shared Komodo
+   deploy action, which waits for the resulting Update. Do not add a direct
+   GitHub Stack webhook that could race these builds. The Stack logs into GHCR
+   with the existing `lorainemg` registry account to pull both images; verify
+   that account can read the new packages. Compose-only edits use the same
+   deploy action without rebuilding.
+4. In the existing Cloudflare Tunnel dashboard, add `t3.sussman.win` targeting
+   `http://caddy:80`. The token-managed tunnel's hostname mapping lives in
+   Cloudflare, so this remains a manual step. The committed Caddyfile already
+   includes the T3 route and hot-reloads through the existing config webhook.
+5. On the server run:
+
+   ```sh
+   python3 /etc/komodo/stacks/t3-code/t3-code/pair.py
+   ```
+
+   Open the printed HTTPS pairing URL or enter its address/code in the T3
+   desktop/mobile client. It grants the default owner scopes and expires after
+   five minutes; generate a fresh code per new device. Reconnects use the saved
+   session. The helper substitutes the public address for Docker's private
+   address without changing the one-time token. No Connect account is needed.
+6. Add a repository under `/workspace`, select Codex and a Foundry model, and
+   run a small task from another PC and a phone on cellular. Recreate the T3
+   container and verify the environment identity, saved session, thread history,
+   model list and working files survive. Revoke a test client under Sharing &
+   access and confirm it must pair again.
+
+Back up `home` and `workspace`; stop T3 while snapshotting its SQLite state.
+Restore ownership and paths. Never copy this home to create another running
+machine: it contains identity and sessions. Keep the runtime token separately
+in a secret store. Upgrade pinned T3/Codex through image
+builds (keep the Codex version in both Dockerfiles aligned); do not self-update inside the container. Rollback sets both `T3_IMAGE`
+and `CATALOG_IMAGE` to the same previous CI SHA in host `.env`, then deploys.
+Browser automation needs additional Linux libraries and sandbox acceptance;
+it is not covered by the verified text-agent setup.
+
+### Local validation
+
+The optional override builds the exact production images and publishes T3 only
+at `127.0.0.1:3774`. Prepare local state and token as above, set `DATA_ROOT` in
+a gitignored `t3-code/.env`, then:
+
+```sh
+docker compose -f t3-code/docker-compose.yml -f t3-code/compose.local.yml up -d --build
+python3 t3-code/pair.py --url http://127.0.0.1:3774
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s t3-code/catalog
+```
+
+The helper uses the same project/service for local and Komodo deployments.
+Stop locally with both Compose files and `down`; bind-mounted state stays on
+disk. Neither the local override nor its settings are referenced by Komodo.
+
+Verified locally: standalone Linux runtime and checksum, non-root Docker
+startup, live Foundry inference through Codex and T3, both model labels, direct
+catalog requests, authenticated WebSocket upgrade through Caddy, and persistent
+identity/workspace after recreation. The
+Foundry project API accepted the supplied resource key for deployment listing;
+this was tested rather than assuming management login was required. Public
+Cloudflare routing, phone pairing/reconnect, live deployment changes in an
+already-open picker, and browser automation remain rollout acceptance checks.
+
+Upstream evidence:
+[standalone Linux release](https://github.com/pingdotgg/t3code/releases/tag/v0.1.5),
+[direct remote pairing](https://github.com/pingdotgg/t3code/blob/v0.1.5/docs/user/remote-access.md),
+[Codex catalog configuration](https://developers.openai.com/codex/config-reference/),
+[Foundry deployment-list SDK](https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/ai/azure-ai-projects/azure/ai/projects/operations/_operations.py).
+No T3-maintained standalone Docker server image was found in the checked
+upstream docs/workflows. Docker's official `sbx/t3code-kit` installs T3 into an
+agent sandbox for desktop-managed SSH; this stack uses its own standalone image.
+
+Foundry's model-detail API was checked for Luna and Sol: it supplies general
+inference/chat/embedding flags, not reasoning levels, context limits or Codex
+shell/tool metadata. The documented [AI Inference `/info` API](https://learn.microsoft.com/en-us/python/api/azure-ai-inference/azure.ai.inference.chatcompletionsclient?view=azure-python-preview)
+is not supported for Azure OpenAI endpoints and only exposes basic model identity.
+No documented endpoint supplying the complete Codex catalog was found; using
+Codex's bundled metadata avoids maintaining a duplicate template in this repo.

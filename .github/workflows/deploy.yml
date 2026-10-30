@@ -16,9 +16,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # The only stack CI still touches. Every other stack is deployed by Komodo
-  # straight from this repo on GitHub's own webhook — no image, nothing to
-  # build, so CI has no part to play. `config` is the exception because
+  # Built-image stacks deploy through CI after their images are published.
+  # Prebuilt-image stacks use direct GitHub webhooks. `config` needs ordering because
   # config-agent is a built image, and Komodo must not pull it until GHCR has
   # it: that ordering is what the trigger step at the bottom exists to enforce.
   build-config-agent:
@@ -75,8 +74,8 @@ jobs:
   # contents, runs the sync and waits for it. Chosen over committing a
   # rendered copy back to the repo so there is one stacks.toml in git.
   #
-  # Both jobs hold the Komodo API key of the `homelab-ci` service user, which
-  # is Write on this sync and Execute on `config` and nothing else -- but the
+  # These jobs hold the Komodo API key of the `homelab-ci` service user, which
+  # is Write on this sync and Execute on `config` and `t3-code` -- but the
   # sync defines every Stack, post_deploy commands included, so treat that key
   # as the most valuable secret in this repo.
   sync-komodo:
@@ -104,3 +103,50 @@ jobs:
           sync: homelab
           contents-file: komodo/stacks.toml
           vars: HOMELAB_LAN_IP=172.20.3.194
+
+  build-t3-code:
+    needs: sync-komodo # Stack definitions land before an image deployment.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: images
+        with:
+          filters: |
+            t3_code:
+              - 't3-code/server/**'
+              - 't3-code/catalog/**'
+            t3_stack:
+              - 't3-code/docker-compose.yml'
+              - 't3-code/deploy.env'
+      - uses: docker/login-action@v3
+        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.t3_code == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.t3_code == 'true'
+        with:
+          context: t3-code/server
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/t3-code:latest
+            ghcr.io/${{ github.repository }}/t3-code:${{ github.sha }}
+      - name: Build catalog image
+        uses: docker/build-push-action@v6
+        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.t3_code == 'true'
+        with:
+          context: t3-code/catalog
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/t3-code-catalog:latest
+            ghcr.io/${{ github.repository }}/t3-code-catalog:${{ github.sha }}
+      - name: Tell Komodo to deploy t3-code
+        if: github.event_name == 'workflow_dispatch' || steps.images.outputs.t3_code == 'true' || steps.images.outputs.t3_stack == 'true'
+        uses: ./.github/actions/komodo/deploy-stack
+        with:
+          komodo-url: ${{ secrets.KOMODO_URL }}
+          api-key: ${{ secrets.KOMODO_API_KEY }}
+          api-secret: ${{ secrets.KOMODO_API_SECRET }}
+          stack: t3-code

@@ -1,0 +1,53 @@
+name: t3-code
+services:
+  t3-code:
+    image: ${T3_IMAGE:-ghcr.io/lorainemg/homelab/t3-code:latest}
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    depends_on:
+      - catalog
+    environment:
+      HOME: /home/t3
+      T3CODE_HOME: /home/t3/.t3
+      CODEX_HOME: /home/t3/.codex
+      CODEX_BASE_URL: ${CODEX_BASE_URL:?Set the Foundry OpenAI v1 URL}
+      CODEX_MODEL: ${CODEX_MODEL:-gpt-6-luna}
+      CODEX_API_TOKEN_FILE: /run/credentials/foundry-token
+    volumes:
+      - ${DATA_ROOT:-/data}/t3-code/home:/home/t3
+      - ${DATA_ROOT:-/data}/t3-code/workspace:/workspace
+      - type: bind
+        source: ${DATA_ROOT:-/data}/t3-code/secrets
+        target: /run/credentials
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - internal
+      - catalog
+    # Caddy is the public entry point. No host port or Docker socket.
+
+  catalog:
+    image: ${CATALOG_IMAGE:-ghcr.io/lorainemg/homelab/t3-code-catalog:latest}
+    init: true
+    restart: unless-stopped
+    environment:
+      FOUNDRY_PROJECT_URL: ${FOUNDRY_PROJECT_URL:?Set the Foundry project URL}
+      CODEX_API_TOKEN_FILE: /run/credentials/foundry-token
+    volumes:
+      - type: bind
+        source: ${DATA_ROOT:-/data}/t3-code/secrets
+        target: /run/credentials
+        read_only: true
+        bind:
+          create_host_path: false
+    networks:
+      - catalog
+    # No public route, host port, polling, cooldown, or catalog cache.
+
+networks:
+  internal:
+    external: true
+  catalog:
+    # Separate from the shared edge network; normal bridge permits Azure egress.
