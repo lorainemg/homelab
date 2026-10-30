@@ -14,6 +14,7 @@ services:
       CODEX_BASE_URL: ${CODEX_BASE_URL:?Set the Foundry OpenAI v1 URL}
       CODEX_MODEL: ${CODEX_MODEL:-gpt-6-luna}
       CODEX_API_TOKEN_FILE: /run/credentials/foundry-token
+      GH_TOKEN: ${GH_TOKEN:-}
     volumes:
       - ${DATA_ROOT:-/data}/t3-code/home:/home/t3
       - ${DATA_ROOT:-/data}/t3-code/workspace:/workspace

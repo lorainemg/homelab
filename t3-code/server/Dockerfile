@@ -5,7 +5,7 @@ ARG TARGETARCH
 ARG T3_VERSION=0.1.5
 # Standalone upstream runtime: no Electron, Node installer, or host systemd.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git openssh-client ripgrep libatomic1 libstdc++6 python3 bubblewrap \
+    ca-certificates curl git gh openssh-client ripgrep libatomic1 libstdc++6 python3 bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
     case "$TARGETARCH" in \

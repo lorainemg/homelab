@@ -506,6 +506,29 @@ and `CATALOG_IMAGE` to the same previous CI SHA in host `.env`, then deploys.
 Browser automation needs additional Linux libraries and sandbox acceptance;
 it is not covered by the verified text-agent setup.
 
+### GitHub account access
+
+The server image includes `gh`. Create a secret Komodo variable named
+`T3_GH_TOKEN`, then supply `GH_TOKEN=[[T3_GH_TOKEN]]` in the T3 Stack's
+Environment. Preserve the existing settings from the host `.env` when filling
+this field: Komodo writes the Environment contents to the Stack's `.env`.
+Keep the real token out of git. Use a GitHub token authorized for the repositories
+and operations you want the agent to access.
+
+Compose passes `GH_TOKEN` to T3 and its agent processes. GitHub CLI uses it
+automatically; startup configures `gh` as Git's HTTPS credential helper. No
+device login or additional credential file is needed. An empty token leaves
+GitHub authentication disabled. After deploying, verify the account:
+
+```sh
+docker exec t3-code-t3-code-1 gh auth status
+docker exec t3-code-t3-code-1 gh api user --jq .login
+```
+
+Rotate the Komodo variable and redeploy to replace the token in the container.
+Git author name and email are separate settings: configure them for each cloned
+repository.
+
 ### Local validation
 
 The optional override builds the exact production images and publishes T3 only

@@ -1,6 +1,7 @@
 """Prepare Codex configuration; load the token from a runtime-only file."""
 import json
 import os
+import subprocess
 from pathlib import Path
 
 os.environ['CODEX_API_TOKEN'] = Path(os.environ['CODEX_API_TOKEN_FILE']).read_text().strip()
@@ -26,5 +27,7 @@ model_catalog_url = "http://catalog:8080/models"
 path = home / 'config.toml'
 path.write_text(config)
 path.chmod(0o600)
+if os.environ.get('GH_TOKEN'):
+    subprocess.run(['gh', 'auth', 'setup-git', '--hostname', 'github.com'], check=True)
 command = os.sys.argv[1:] or ['t3', 'serve', '--host', '0.0.0.0', '--port', '3773', '/workspace']
 os.execvp(command[0], command)
